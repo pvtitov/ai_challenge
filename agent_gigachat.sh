@@ -14,6 +14,7 @@ fi
 MAX_TOKENS=""
 STOP_SEQUENCE=""
 PROMPT_ARGS=""
+FILE_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +24,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --stop)
       STOP_SEQUENCE="$2"
+      shift 2
+      ;;
+    --file)
+      FILE_PATH="$2"
       shift 2
       ;;
     *)
@@ -57,22 +62,29 @@ fi
 URL="https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 
 # The user's prompt with instructions for JSON output
-FULL_PROMPT="Return ONLY a JSON list of objects. Do not include any other text, explanation, or markdown. Each object must have the keys 'country', 'name', and 'description'. The user's request is: ${PROMPT_ARGS}"
+BASE_PROMPT="Return ONLY a JSON. Do not include any other text, explanation, or markdown. Each JSON should have the keys 'full_response' and 'summary'. The user's request is: ${PROMPT_ARGS}"
 
 # --- Build JSON Payload ---
-DATA=$(cat << EOF
-{
-  "model": "GigaChat:latest",
-  "messages": [
-    {
-      "role": "user",
-      "content": "$FULL_PROMPT"
-    }
-  ],
-  "temperature": 0.7
-}
-EOF
-)
+# Start with a base payload, letting jq handle the initial JSON structure and escaping
+DATA=$(jq -n \
+  --arg model "GigaChat:latest" \
+  --arg role "user" \
+  --arg content "$BASE_PROMPT" \
+  '{model: $model, messages: [{role: $role, content: $content}], temperature: 0.7}')
+
+# If a file is provided, read its content and prepend it to the 'content' field
+if [ -n "$FILE_PATH" ]; then
+  if [ -f "$FILE_PATH" ]; then
+    FILE_CONTENT=$(cat "$FILE_PATH")
+    # Create the full prompt with context
+    FULL_PROMPT="Context from file:\n${FILE_CONTENT}\n\n${BASE_PROMPT}"
+    # Safely update the 'content' in the JSON payload using jq
+    DATA=$(echo "$DATA" | jq --arg new_content "$FULL_PROMPT" '.messages[0].content = $new_content')
+  else
+    echo "Error: File not found at $FILE_PATH"
+    exit 1
+  fi
+fi
 
 # Add optional parameters if they are set
 if [ -n "$MAX_TOKENS" ]; then
@@ -83,27 +95,46 @@ if [ -n "$STOP_SEQUENCE" ]; then
   DATA=$(echo "$DATA" | jq --arg stop "$STOP_SEQUENCE" '. + {stop: [$stop]}')
 fi
 
-echo -e "$DATA\n"
-
 # Make the API request and print the response, extracting and parsing the JSON
 RAW_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $ACCESS_TOKEN" -d "$DATA" "$URL")
-CONTENT=$(echo "$RAW_RESPONSE" | jq -r '.choices[0].message.content')
+# First, try to parse the message content as a JSON string
+PARSED_RESPONSE=$(echo "$RAW_RESPONSE" | jq '.choices[0].message.content | fromjson' 2>/dev/null)
+TOTAL_TOKENS=$(echo "$RAW_RESPONSE" | jq '.usage.total_tokens')
 
-# Extract the JSON from the content
-JSON_RESPONSE=$(echo "$CONTENT" | sed -n '/\[/,/\]/p')
+if [ $? -ne 0 ] || [ -z "$PARSED_RESPONSE" ]; then
+  # If fromjson fails or returns empty, treat it as a plain string that might be wrapped in markdown
+  CONTENT=$(echo "$RAW_RESPONSE" | jq -r '.choices[0].message.content')
 
-# If sed fails, try to find json in code blocks
-if [ -z "$JSON_RESPONSE" ]; then
-    JSON_RESPONSE=$(echo "$CONTENT" | sed -n '/```json/,/```/p' | sed '1d;$d')
+  # Use the python script to robustly extract the JSON object
+  JSON_RESPONSE=$(echo "$CONTENT" | ./extract_json.py)
+
+  # Parse the extracted JSON
+  PARSED_RESPONSE=$(echo "$JSON_RESPONSE" | jq '.' 2> /dev/null)
+
+  if [ $? -ne 0 ]; then
+    echo "Error: Failed to parse JSON response. Printing raw content:"
+    echo "$CONTENT"
+    exit 1
+  fi
 fi
 
+# At this point, PARSED_RESPONSE should hold the valid, parsed JSON object.
+FULL_RESPONSE=$(echo "$PARSED_RESPONSE" | jq -r '.full_response')
+SUMMARY=$(echo "$PARSED_RESPONSE" | jq -r '.summary')
 
-# Parse the extracted JSON
-PARSED_RESPONSE=$(echo "$JSON_RESPONSE" | jq '.' 2> /dev/null)
-
-if [ $? -ne 0 ]; then
-  echo "Error: Failed to parse JSON response. Printing raw content:"
-  echo "$CONTENT"
-else
-  echo "$PARSED_RESPONSE"
+# Check for empty fields to aid in debugging intermittent API issues
+if [ -z "$FULL_RESPONSE" ] && [ -z "$SUMMARY" ]; then
+    echo "Error: Extracted full_response and summary are both empty. This might indicate an unusual API response. Raw content processed by extractor:" >&2
+    echo "$CONTENT" >&2
 fi
+
+echo "---FULL RESPONSE:---"
+echo "$FULL_RESPONSE"
+echo
+echo "---SUMMARY:---"
+echo "$SUMMARY"
+
+
+echo
+echo "---"
+echo "Tokens spent: $TOTAL_TOKENS"
