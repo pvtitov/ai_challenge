@@ -2,6 +2,7 @@
 
 # Create a temporary file to store results
 TMP_FILE=$(mktemp)
+AGENT=/Users/paveltitov/Documents/programming/ai_challenge/gigachat/agent_gigachat.sh
 echo "Temporary file created at: $TMP_FILE"
 
 # --- Helper Function to Run and Log ---
@@ -16,7 +17,7 @@ run_and_log() {
   
   echo "RESPONSE:" | tee -a "$output_file"
   # Execute the agent script and append the full output to the temp file and terminal
-  ./agent_gigachat.sh "$prompt_text" | tee -a "$output_file"
+  $AGENT "$prompt_text" | tee -a "$output_file"
   
   echo | tee -a "$output_file"
 }
@@ -38,7 +39,7 @@ echo "Meta-Prompt: $META_PROMPT" | tee -a "$TMP_FILE"
 echo "-------------------------------------------------" | tee -a "$TMP_FILE"
 
 # Run the agent, capture the response, and extract the 'full_response' part
-GENERATED_PROMPT_RESPONSE=$(./agent_gigachat.sh "$META_PROMPT")
+GENERATED_PROMPT_RESPONSE=$($AGENT "$META_PROMPT")
 echo "$GENERATED_PROMPT_RESPONSE" | tee -a "$TMP_FILE"
 
 # Extract the content between "---FULL RESPONSE:---" and "---SUMMARY:---"
@@ -62,7 +63,7 @@ echo "           SUMMARIZING ALL RESPONSES           "
 echo "================================================="
 SUMMARIZE_PROMPT="Кратко суммаризируй этот лог с разными реализациями быстрой сортировки. Укажи ключевые особенности каждого из предложенных вариантов кода."
 echo "Running summarization..."
-SUMMARY_RESPONSE=$(./agent_gigachat.sh "$SUMMARIZE_PROMPT" --file "$TMP_FILE")
+SUMMARY_RESPONSE=$($AGENT "$SUMMARIZE_PROMPT" --file "$TMP_FILE")
 
 SUMMARY_TEXT=$(echo "$SUMMARY_RESPONSE" | awk '/^---FULL RESPONSE:---$/,/^---SUMMARY:---$/{if (!/^---FULL RESPONSE:---$/ && !/^---SUMMARY:---$/) print}' | sed '/^$/d')
 
@@ -89,7 +90,7 @@ COMPARISON_PROMPT="Основываясь на содержимом файла, 
 
 Для каждого ответа оцени полноту, качество кода и объяснений. Укажи сильные и слабые стороны. Сделай итоговый вывод о том, какой ответ был наиболее удачным."
 echo "Running final comparison..."
-./agent_gigachat.sh "$COMPARISON_PROMPT" --file "$SUMMARY_FILE"
+$AGENT "$COMPARISON_PROMPT" --file "$SUMMARY_FILE"
 
 # --- Cleanup ---
 echo "Deleting temporary file: $TMP_FILE"

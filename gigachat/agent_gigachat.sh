@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Source the file with the API key
-source set_api_key.sh
+source /Users/paveltitov/Documents/programming/ai_challenge/set_api_key.sh
 
 # Check if the GigaChat API credentials are set
 if [ -z "$GIGACHAT_API_CREDENTIALS" ]; then
@@ -15,6 +15,7 @@ MAX_TOKENS=""
 STOP_SEQUENCE=""
 PROMPT_ARGS=""
 FILE_PATH=""
+TEMPERATURE="0.7" # Default temperature
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -30,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       FILE_PATH="$2"
       shift 2
       ;;
+    --temperature)
+      TEMPERATURE="$2"
+      shift 2
+      ;;
     *)
       PROMPT_ARGS="$PROMPT_ARGS $1"
       shift
@@ -39,7 +44,7 @@ done
 
 # Check if a prompt is provided
 if [ -z "$PROMPT_ARGS" ]; then
-  echo "Usage: $0 [--max-tokens <number>] [--stop <sequence>] <prompt>"
+  echo "Usage: $0 [--max-tokens <number>] [--stop <sequence>] [--temperature <number>] <prompt>"
   exit 1
 fi
 
@@ -70,7 +75,8 @@ DATA=$(jq -n \
   --arg model "GigaChat:latest" \
   --arg role "user" \
   --arg content "$BASE_PROMPT" \
-  '{model: $model, messages: [{role: $role, content: $content}], temperature: 0.7}')
+  --argjson temp "$TEMPERATURE" \
+  '{model: $model, messages: [{role: $role, content: $content}], temperature: $temp}')
 
 # If a file is provided, read its content and prepend it to the 'content' field
 if [ -n "$FILE_PATH" ]; then

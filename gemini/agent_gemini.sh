@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Source the file with the API key
-source set_api_key.sh
+source /Users/paveltitov/Documents/programming/ai_challenge/set_api_key.sh
 
 # Check if the API key is set
 if [ -z "$GEMINI_API_KEY" ]; then
