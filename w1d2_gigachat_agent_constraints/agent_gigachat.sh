@@ -112,7 +112,8 @@ if [ $? -ne 0 ] || [ -z "$PARSED_RESPONSE" ]; then
   CONTENT=$(echo "$RAW_RESPONSE" | jq -r '.choices[0].message.content')
 
   # Use the python script to robustly extract the JSON object
-  JSON_RESPONSE=$(echo "$CONTENT" | ./extract_json.py)
+  SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+  JSON_RESPONSE=$(echo "$CONTENT" | "$SCRIPT_DIR/../shared/extract_json.py")
 
   # Parse the extracted JSON
   PARSED_RESPONSE=$(echo "$JSON_RESPONSE" | jq '.' 2> /dev/null)

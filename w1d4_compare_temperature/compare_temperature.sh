@@ -7,7 +7,7 @@ if [ -z "$1" ]; then
 fi
 
 PROMPT="$1"
-AGENT=/Users/paveltitov/Documents/programming/ai_challenge/gigachat/agent_gigachat.sh
+AGENT=/Users/paveltitov/Documents/programming/ai_challenge/w1d2_gigachat_agent_constraints/agent_gigachat.sh
 
 # Create a temporary file to store results
 TMP_FILE=$(mktemp)

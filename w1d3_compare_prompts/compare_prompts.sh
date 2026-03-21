@@ -2,7 +2,7 @@
 
 # Create a temporary file to store results
 TMP_FILE=$(mktemp)
-AGENT=/Users/paveltitov/Documents/programming/ai_challenge/gigachat/agent_gigachat.sh
+AGENT=/Users/paveltitov/Documents/programming/ai_challenge/w1d2_gigachat_agent_constraints/agent_gigachat.sh
 echo "Temporary file created at: $TMP_FILE"
 
 # --- Helper Function to Run and Log ---
