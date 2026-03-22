@@ -103,9 +103,8 @@ TOTAL_TOKENS=$(echo "$RAW_RESPONSE" | jq -r '.usage.total_tokens')
 PARSED_RESPONSE=$(echo "$CONTENT" | fromjson 2>/dev/null)
 
 if [ $? -ne 0 ] || [ -z "$PARSED_RESPONSE" ]; then
-  # If fromjson fails, use the python script to robustly extract the JSON object
-  SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-  JSON_RESPONSE=$(echo "$CONTENT" | "$SCRIPT_DIR/../shared/extract_json.py")
+  # If fromjson fails, use the trim_json.sh script to extract the JSON object
+  JSON_RESPONSE=$(echo "$CONTENT" | "$SCRIPT_DIR/../shared/trim_json.sh")
 
   # Parse the extracted JSON
   PARSED_RESPONSE=$(echo "$JSON_RESPONSE" | jq '.' 2> /dev/null)
