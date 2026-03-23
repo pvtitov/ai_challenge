@@ -1,5 +1,7 @@
 #!/bin/bash
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
 # Source the file with the API key
 source /Users/paveltitov/Documents/programming/ai_challenge/set_api_key.sh
 
@@ -67,7 +69,7 @@ fi
 URL="https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
 
 # The user's prompt with instructions for JSON output
-BASE_PROMPT="Return ONLY a JSON. Do not include any other text, explanation, or markdown. Each JSON should have the keys 'full_response' and 'summary'. The user's request is: ${PROMPT_ARGS}"
+BASE_PROMPT="Return ONLY a valid JSON object. Do not include any other text, explanation, or markdown. The JSON object must have two keys: 'full_response' and 'summary'. Ensure that any code or special characters in the string values are properly escaped. The user's request is: ${PROMPT_ARGS}"
 
 # --- Build JSON Payload ---
 # Start with a base payload, letting jq handle the initial JSON structure and escaping
