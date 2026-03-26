@@ -43,14 +43,48 @@ if [ -z "$PROMPT_ARGS" ]; then
 fi
 
 # --- GigaChat Authentication ---
-AUTH_URL="https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-RQUID=$(uuidgen)
-ACCESS_TOKEN=$(curl -s -X POST "$AUTH_URL" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Accept: application/json" \
-  -H "RqUID: $RQUID" \
-  -H "Authorization: Basic $GIGACHAT_API_CREDENTIALS" \
-  --data-urlencode "scope=GIGACHAT_API_PERS" | jq -r '.access_token')
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+TOKEN_CACHE_FILE="$SCRIPT_DIR/.gigachat_token_cache"
+TOKEN_EXPIRATION=$((30 * 60)) # 30 minutes in seconds
+
+ACCESS_TOKEN=""
+
+# Check for a cached token
+if [ -f "$TOKEN_CACHE_FILE" ]; then
+  TOKEN_TIMESTAMP=$(sed -n '1p' "$TOKEN_CACHE_FILE")
+  # Check if TOKEN_TIMESTAMP is a valid number
+  if [[ "$TOKEN_TIMESTAMP" =~ ^[0-9]+$ ]]; then
+    CURRENT_TIMESTAMP=$(date +%s)
+    TIME_DIFF=$((CURRENT_TIMESTAMP - TOKEN_TIMESTAMP))
+
+    if [ "$TIME_DIFF" -lt "$TOKEN_EXPIRATION" ]; then
+      ACCESS_TOKEN=$(sed -n '2p' "$TOKEN_CACHE_FILE")
+    fi
+  fi
+fi
+
+# If no valid cached token, get a new one
+if [ -z "$ACCESS_TOKEN" ]; then
+  AUTH_URL="https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+  RQUID=$(uuidgen)
+  TOKEN_RESPONSE=$(curl -s -X POST "$AUTH_URL" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -H "Accept: application/json" \
+    -H "RqUID: $RQUID" \
+    -H "Authorization: Basic $GIGACHAT_API_CREDENTIALS" \
+    --data-urlencode "scope=GIGACHAT_API_PERS")
+
+  ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token')
+
+  if [ -z "$ACCESS_TOKEN" ]; then
+    echo "Error: Failed to obtain access token."
+    exit 1
+  fi
+
+  # Save the new token and timestamp to the cache file
+  echo "$(date +%s)" > "$TOKEN_CACHE_FILE"
+  echo "$ACCESS_TOKEN" >> "$TOKEN_CACHE_FILE"
+fi
 
 if [ -z "$ACCESS_TOKEN" ]; then
   echo "Error: Failed to obtain access token."
