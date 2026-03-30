@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 1rem; }
+        #chat-log { border: 1px solid #ccc; padding: 1rem; margin-bottom: 1rem; height: 400px; overflow-y: scroll; }
+        #chat-form { display: flex; }
+        #prompt-input { flex-grow: 1; padding: 0.5rem; }
+        #send-button { padding: 0.5rem 1rem; }
+        .message { margin-bottom: 1rem; }
+        .message .role { font-weight: bold; }
+        .message .tokens { font-size: 0.8rem; color: #888; }
+    </style>
+</head>
+<body>
+    <h1>AI Chat</h1>
+    <div id="chat-log"></div>
+    <form id="chat-form">
+        <input type="text" id="prompt-input" placeholder="Enter your message..." autocomplete="off">
+        <button id="send-button" type="submit">Send</button>
+    </form>
+
+    <script>
+        const chatLog = document.getElementById('chat-log');
+        const chatForm = document.getElementById('chat-form');
+        const promptInput = document.getElementById('prompt-input');
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const userInput = promptInput.value.trim();
+            if (!userInput) return;
+
+            addMessageToLog('You', userInput);
+            promptInput.value = '';
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: userInput })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    addMessageToLog('Error', `Failed to get response: ${errorText}`);
+                    return;
+                }
+
+                const data = await response.json();
+                addMessageToLog('Agent', data.agentResponse, data);
+
+            } catch (error) {
+                addMessageToLog('Error', `An error occurred: ${error.message}`);
+            }
+        });
+
+        function addMessageToLog(role, content, tokenInfo) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message');
+
+            const roleSpan = document.createElement('span');
+            roleSpan.classList.add('role');
+            roleSpan.textContent = `${role}: `;
+            messageDiv.appendChild(roleSpan);
+
+            const contentSpan = document.createElement('span');
+            contentSpan.textContent = content;
+            messageDiv.appendChild(contentSpan);
+
+            if (tokenInfo) {
+                const tokensDiv = document.createElement('div');
+                tokensDiv.classList.add('tokens');
+                tokensDiv.textContent = 
+                    `Tokens request/response/total: ${tokenInfo.promptTokens}/${tokenInfo.completionTokens}/${tokenInfo.totalTokens} | Cumulative total tokens: ${tokenInfo.cumulativeTotalTokens}`;
+                messageDiv.appendChild(tokensDiv);
+            }
+
+            chatLog.appendChild(messageDiv);
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+    </script>
+</body>
+</html>
