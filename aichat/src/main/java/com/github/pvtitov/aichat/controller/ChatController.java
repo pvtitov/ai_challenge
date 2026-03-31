@@ -3,6 +3,7 @@ package com.github.pvtitov.aichat.controller;
 import com.github.pvtitov.aichat.dto.ChatRequest;
 import com.github.pvtitov.aichat.dto.ChatResponse;
 import com.github.pvtitov.aichat.service.ChatService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,7 +20,13 @@ public class ChatController {
     }
 
     @PostMapping("/chat")
-    public ChatResponse chat(@RequestBody ChatRequest request) throws IOException {
-        return chatService.process(request.getPrompt());
+    public ResponseEntity<ChatResponse> chat(@RequestBody ChatRequest request) {
+        try {
+            ChatResponse response = chatService.process(request.getPrompt());
+            return ResponseEntity.ok(response);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
     }
 }

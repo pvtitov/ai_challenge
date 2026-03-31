@@ -13,6 +13,8 @@
         .message { margin-bottom: 1rem; }
         .message .role { font-weight: bold; }
         .message .tokens { font-size: 0.8rem; color: #888; }
+        .summary { font-style: italic; color: #555; }
+        .sticky-facts { font-weight: bold; color: #333; }
     </style>
 </head>
 <body>
@@ -50,14 +52,14 @@
                 }
 
                 const data = await response.json();
-                addMessageToLog('Agent', data.agentResponse, data);
+                addMessageToLog('Agent', data.fullResponse, data);
 
             } catch (error) {
                 addMessageToLog('Error', `An error occurred: ${error.message}`);
             }
         });
 
-        function addMessageToLog(role, content, tokenInfo) {
+        function addMessageToLog(role, content, data) {
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message');
 
@@ -70,11 +72,23 @@
             contentSpan.textContent = content;
             messageDiv.appendChild(contentSpan);
 
-            if (tokenInfo) {
+            if (data && role === 'Agent') {
+                if (data.summary) {
+                    const summaryDiv = document.createElement('div');
+                    summaryDiv.classList.add('summary');
+                    summaryDiv.textContent = `Summary: ${data.summary}`;
+                    messageDiv.appendChild(summaryDiv);
+                }
+                if (data.stickyFacts) {
+                    const stickyFactsDiv = document.createElement('div');
+                    stickyFactsDiv.classList.add('sticky-facts');
+                    stickyFactsDiv.textContent = `Sticky Facts: ${data.stickyFacts}`;
+                    messageDiv.appendChild(stickyFactsDiv);
+                }
                 const tokensDiv = document.createElement('div');
                 tokensDiv.classList.add('tokens');
-                tokensDiv.textContent = 
-                    `Tokens request/response/total: ${tokenInfo.promptTokens}/${tokenInfo.completionTokens}/${tokenInfo.totalTokens} | Cumulative total tokens: ${tokenInfo.cumulativeTotalTokens}`;
+                tokensDiv.textContent =
+                    `Tokens request/response/total: ${data.promptTokens}/${data.completionTokens}/${data.totalTokens} | Cumulative total tokens: ${data.cumulativeTokens}`;
                 messageDiv.appendChild(tokensDiv);
             }
 

@@ -6,22 +6,21 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
-public class StickyFactsHistoryStrategy implements HistoryStrategy {
-
+public class SummaryHistoryStrategy implements HistoryStrategy {
     @Override
     public List<ChatMessage> apply(List<ChatMessage> messages) {
         if (messages.isEmpty()) {
             return Collections.emptyList();
         }
 
-        String facts = messages.stream()
+        String summary = messages.stream()
                 .map(ChatMessage::getContent)
-                .collect(Collectors.joining(", "));
+                .collect(Collectors.joining(" "));
 
-        ChatMessage factsMessage = new ChatMessage();
-        factsMessage.setRole("system");
-        factsMessage.setContent("Remember these facts: " + facts);
+        ChatMessage summaryMessage = new ChatMessage();
+        summaryMessage.setRole("system");
+        summaryMessage.setContent("Summary of previous conversation: " + summary);
 
-        return Collections.singletonList(factsMessage);
+        return Collections.singletonList(summaryMessage);
     }
 }

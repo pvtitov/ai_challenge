@@ -82,7 +82,11 @@ public class GigaChatApiService {
                 return complexResponse;
             } catch (Exception e) {
                 // If parsing fails, return the raw content in the full_response and empty strings for others
-                return new GigaChatComplexResponse(content, "", "");
+                GigaChatComplexResponse complexResponse = new GigaChatComplexResponse();
+                complexResponse.setFullResponse(content);
+                complexResponse.setSummary("");
+                complexResponse.setStickyFacts("");
+                return complexResponse;
             }
         }
     }

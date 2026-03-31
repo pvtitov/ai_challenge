@@ -1,22 +1,27 @@
 package com.github.pvtitov.aichat.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.pvtitov.aichat.dto.ChatResponse;
 import com.github.pvtitov.aichat.dto.GigaChatComplexResponse;
 import com.github.pvtitov.aichat.model.ChatMessage;
 import com.github.pvtitov.aichat.repository.ChatHistoryRepository;
 import org.json.JSONArray;
+import org.json.JSONObject;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @Service
 public class ChatServiceImpl implements ChatService {
 
     private final ChatHistoryRepository chatHistoryRepository;
     private final GigaChatApiService gigaChatApiService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
 
     private HistoryStrategy shortTermStrategy;
     private HistoryStrategy midTermStrategy;
@@ -37,29 +42,51 @@ public class ChatServiceImpl implements ChatService {
     public ChatResponse process(String userInput) throws IOException {
         if (userInput.startsWith("/")) {
             String commandResult = handleCommand(userInput);
-            return new ChatResponse(commandResult, 0, 0, 0, 0);
+            return new ChatResponse(commandResult, "", "", 0, 0, 0, 0);
         }
 
-        saveMessage(chatHistoryRepository::saveShortTerm, "user", userInput, currentBranch, null, null, null);
-
-        JSONArray shortTermHistory = shortTermStrategy.getHistory(chatHistoryRepository::findShortTermByBranch, currentBranch);
-        JSONArray midTermHistory = midTermStrategy.getHistory(chatHistoryRepository::findMidTermByBranch, currentBranch);
-        JSONArray longTermHistory = longTermStrategy.getHistory(chatHistoryRepository::findLongTermByBranch, currentBranch);
+        List<ChatMessage> shortTermHistory = chatHistoryRepository.findShortTermByBranch(currentBranch);
+        List<ChatMessage> midTermHistory = chatHistoryRepository.findMidTermByBranch(currentBranch);
+        List<ChatMessage> longTermHistory = chatHistoryRepository.findLongTermByBranch(currentBranch);
 
         JSONArray combinedHistory = new JSONArray();
-        shortTermHistory.forEach(combinedHistory::put);
-        midTermHistory.forEach(combinedHistory::put);
-        longTermHistory.forEach(combinedHistory::put);
+        longTermHistory.forEach(msg -> combinedHistory.put(new JSONObject().put("role", msg.getRole()).put("content", msg.getContent())));
+        midTermHistory.forEach(msg -> combinedHistory.put(new JSONObject().put("role", msg.getRole()).put("content", msg.getContent())));
+        shortTermHistory.forEach(msg -> combinedHistory.put(new JSONObject().put("role", msg.getRole()).put("content", msg.getContent())));
 
         GigaChatComplexResponse assistantResponse = gigaChatApiService.getCompletion(combinedHistory, userInput);
 
-        saveMessage(chatHistoryRepository::saveShortTerm, "assistant", assistantResponse.getFullResponse(), currentBranch, null, null, null);
-        saveMessage(chatHistoryRepository::saveMidTerm, "assistant", assistantResponse.getSummary(), currentBranch, null, null, null);
-        saveMessage(chatHistoryRepository::saveLongTerm, "assistant", assistantResponse.getStickyFacts(), currentBranch, null, null, null);
+        ChatMessage userMessage = new ChatMessage();
+        userMessage.setRole("user");
+        userMessage.setContent(userInput);
+        userMessage.setBranch(currentBranch);
+
+        ChatMessage assistantMessage = new ChatMessage();
+        assistantMessage.setRole("assistant");
+        assistantMessage.setContent(assistantResponse.toString());
+        assistantMessage.setBranch(currentBranch);
+
+        updateHistory(shortTermHistory, userMessage, assistantMessage, shortTermStrategy, chatHistoryRepository::saveShortTerm, chatHistoryRepository::deleteShortTermByBranch);
+        updateHistory(midTermHistory, userMessage, assistantMessage, midTermStrategy, chatHistoryRepository::saveMidTerm, chatHistoryRepository::deleteMidTermByBranch);
+        updateHistory(longTermHistory, userMessage, assistantMessage, longTermStrategy, chatHistoryRepository::saveLongTerm, chatHistoryRepository::deleteLongTermByBranch);
 
         long cumulativeTokens = chatHistoryRepository.getCumulativeTokens(currentBranch);
 
-        return new ChatResponse(assistantResponse.getFullResponse(), 0, 0, 0, cumulativeTokens);
+        return new ChatResponse(
+                assistantResponse.getFullResponse(),
+                assistantResponse.getSummary(),
+                assistantResponse.getStickyFacts(),
+                0, 0, 0, cumulativeTokens
+        );
+    }
+
+    private void updateHistory(List<ChatMessage> history, ChatMessage userMessage, ChatMessage assistantMessage, HistoryStrategy strategy, SaveMessageFunction saveFunction, DeleteBranchFunction deleteFunction) {
+        List<ChatMessage> newHistory = new ArrayList<>(history);
+        newHistory.add(userMessage);
+        newHistory.add(assistantMessage);
+        List<ChatMessage> appliedHistory = strategy.apply(newHistory);
+        deleteFunction.delete(currentBranch);
+        appliedHistory.forEach(saveFunction::save);
     }
 
     private String handleCommand(String command) {
@@ -94,13 +121,22 @@ public class ChatServiceImpl implements ChatService {
         int newBranch = chatHistoryRepository.getMaxBranch() + 1;
 
         List<ChatMessage> shortTerm = chatHistoryRepository.findShortTermByBranch(currentBranch);
-        shortTerm.forEach(m -> saveMessage(chatHistoryRepository::saveShortTerm, m.getRole(), m.getContent(), newBranch, m.getPromptTokens(), m.getCompletionTokens(), m.getTotalTokens()));
+        shortTerm.forEach(m -> {
+            m.setBranch(newBranch);
+            chatHistoryRepository.saveShortTerm(m);
+        });
 
         List<ChatMessage> midTerm = chatHistoryRepository.findMidTermByBranch(currentBranch);
-        midTerm.forEach(m -> saveMessage(chatHistoryRepository::saveMidTerm, m.getRole(), m.getContent(), newBranch, m.getPromptTokens(), m.getCompletionTokens(), m.getTotalTokens()));
+        midTerm.forEach(m -> {
+            m.setBranch(newBranch);
+            chatHistoryRepository.saveMidTerm(m);
+        });
 
         List<ChatMessage> longTerm = chatHistoryRepository.findLongTermByBranch(currentBranch);
-        longTerm.forEach(m -> saveMessage(chatHistoryRepository::saveLongTerm, m.getRole(), m.getContent(), newBranch, m.getPromptTokens(), m.getCompletionTokens(), m.getTotalTokens()));
+        longTerm.forEach(m -> {
+            m.setBranch(newBranch);
+            chatHistoryRepository.saveLongTerm(m);
+        });
 
         int previousBranch = currentBranch;
         currentBranch = newBranch;
@@ -130,32 +166,23 @@ public class ChatServiceImpl implements ChatService {
         StringBuilder sb = new StringBuilder();
 
         sb.append("Short Term History:\n");
-        JSONArray shortTermHistory = shortTermStrategy.getHistory(chatHistoryRepository::findShortTermByBranch, currentBranch);
-        shortTermHistory.forEach(item -> {
-            org.json.JSONObject obj = (org.json.JSONObject) item;
-            sb.append(obj.getString("role")).append(": ").append(obj.getString("content")).append("\n");
-        });
+        List<ChatMessage> shortTermHistory = chatHistoryRepository.findShortTermByBranch(currentBranch);
+        shortTermHistory.forEach(item -> sb.append(item.getRole()).append(": ").append(item.getContent()).append("\n"));
 
         sb.append("\nMid Term History:\n");
-        JSONArray midTermHistory = midTermStrategy.getHistory(chatHistoryRepository::findMidTermByBranch, currentBranch);
-        midTermHistory.forEach(item -> {
-            org.json.JSONObject obj = (org.json.JSONObject) item;
-            sb.append(obj.getString("role")).append(": ").append(obj.getString("content")).append("\n");
-        });
+        List<ChatMessage> midTermHistory = chatHistoryRepository.findMidTermByBranch(currentBranch);
+        midTermHistory.forEach(item -> sb.append(item.getRole()).append(": ").append(item.getContent()).append("\n"));
 
         sb.append("\nLong Term History:\n");
-        JSONArray longTermHistory = longTermStrategy.getHistory(chatHistoryRepository::findLongTermByBranch, currentBranch);
-        longTermHistory.forEach(item -> {
-            org.json.JSONObject obj = (org.json.JSONObject) item;
-            sb.append(obj.getString("role")).append(": ").append(obj.getString("content")).append("\n");
-        });
+        List<ChatMessage> longTermHistory = chatHistoryRepository.findLongTermByBranch(currentBranch);
+        longTermHistory.forEach(item -> sb.append(item.getRole()).append(": ").append(item.getContent()).append("\n"));
 
         return sb.toString().trim();
     }
 
     private String setHistoryStrategy(String[] parts) {
         if (parts.length < 2) {
-            return "Usage: /strategy [short|middle|long] [unlimited|sliding|sticky] [size]";
+            return "Usage: /strategy [short|middle|long] [unlimited|sliding|sticky|summary] [size]";
         }
 
         String memoryType = "short"; // Default memory type
@@ -167,7 +194,7 @@ public class ChatServiceImpl implements ChatService {
         }
 
         if (parts.length <= strategyIndex) {
-            return "Usage: /strategy [short|middle|long] [unlimited|sliding|sticky] [size]";
+            return "Usage: /strategy [short|middle|long] [unlimited|sliding|sticky|summary] [size]";
         }
 
         String strategyType = parts[strategyIndex];
@@ -191,6 +218,9 @@ public class ChatServiceImpl implements ChatService {
                 break;
             case "sticky":
                 newStrategy = new StickyFactsHistoryStrategy();
+                break;
+            case "summary":
+                newStrategy = new SummaryHistoryStrategy();
                 break;
             default:
                 return "Unknown strategy: " + strategyType;
@@ -219,14 +249,10 @@ public class ChatServiceImpl implements ChatService {
         void save(ChatMessage message);
     }
 
-    private void saveMessage(SaveMessageFunction saveFunction, String role, String content, int branch, Integer promptTokens, Integer completionTokens, Integer totalTokens) {
-        ChatMessage message = new ChatMessage();
-        message.setBranch(branch);
-        message.setRole(role);
-        message.setContent(content);
-        message.setPromptTokens(promptTokens);
-        message.setCompletionTokens(completionTokens);
-        message.setTotalTokens(totalTokens);
-        saveFunction.save(message);
+    @FunctionalInterface
+    interface DeleteBranchFunction {
+        void delete(int branch);
     }
+
+    
 }

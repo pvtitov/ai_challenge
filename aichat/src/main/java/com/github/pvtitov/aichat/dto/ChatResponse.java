@@ -1,27 +1,51 @@
 package com.github.pvtitov.aichat.dto;
 
+import java.util.Objects;
+
 public class ChatResponse {
-    private String agentResponse;
+    private String fullResponse;
+    private String summary;
+    private String stickyFacts;
     private int promptTokens;
     private int completionTokens;
     private int totalTokens;
-    private long cumulativeTotalTokens;
+    private long cumulativeTokens;
 
-    public ChatResponse(String agentResponse, int promptTokens, int completionTokens, int totalTokens, long cumulativeTotalTokens) {
-        this.agentResponse = agentResponse;
+    public ChatResponse() {
+    }
+
+    public ChatResponse(String fullResponse, String summary, String stickyFacts, int promptTokens, int completionTokens, int totalTokens, long cumulativeTokens) {
+        this.fullResponse = fullResponse;
+        this.summary = summary;
+        this.stickyFacts = stickyFacts;
         this.promptTokens = promptTokens;
         this.completionTokens = completionTokens;
         this.totalTokens = totalTokens;
-        this.cumulativeTotalTokens = cumulativeTotalTokens;
+        this.cumulativeTokens = cumulativeTokens;
     }
 
-    // Getters and setters
-    public String getAgentResponse() {
-        return agentResponse;
+    public String getFullResponse() {
+        return fullResponse;
     }
 
-    public void setAgentResponse(String agentResponse) {
-        this.agentResponse = agentResponse;
+    public void setFullResponse(String fullResponse) {
+        this.fullResponse = fullResponse;
+    }
+
+    public String getSummary() {
+        return summary;
+    }
+
+    public void setSummary(String summary) {
+        this.summary = summary;
+    }
+
+    public String getStickyFacts() {
+        return stickyFacts;
+    }
+
+    public void setStickyFacts(String stickyFacts) {
+        this.stickyFacts = stickyFacts;
     }
 
     public int getPromptTokens() {
@@ -48,11 +72,43 @@ public class ChatResponse {
         this.totalTokens = totalTokens;
     }
 
-    public long getCumulativeTotalTokens() {
-        return cumulativeTotalTokens;
+    public long getCumulativeTokens() {
+        return cumulativeTokens;
     }
 
-    public void setCumulativeTotalTokens(long cumulativeTotalTokens) {
-        this.cumulativeTotalTokens = cumulativeTotalTokens;
+    public void setCumulativeTokens(long cumulativeTokens) {
+        this.cumulativeTokens = cumulativeTokens;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ChatResponse that = (ChatResponse) o;
+        return promptTokens == that.promptTokens &&
+                completionTokens == that.completionTokens &&
+                totalTokens == that.totalTokens &&
+                cumulativeTokens == that.cumulativeTokens &&
+                Objects.equals(fullResponse, that.fullResponse) &&
+                Objects.equals(summary, that.summary) &&
+                Objects.equals(stickyFacts, that.stickyFacts);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(fullResponse, summary, stickyFacts, promptTokens, completionTokens, totalTokens, cumulativeTokens);
+    }
+
+    @Override
+    public String toString() {
+        return "ChatResponse{" +
+                "fullResponse='" + fullResponse + '\'' +
+                ", summary='" + summary + '\'' +
+                ", stickyFacts='" + stickyFacts + '\'' +
+                ", promptTokens=" + promptTokens +
+                ", completionTokens=" + completionTokens +
+                ", totalTokens=" + totalTokens +
+                ", cumulativeTokens=" + cumulativeTokens +
+                '}';
     }
 }

@@ -56,6 +56,21 @@ public class ChatHistoryRepositoryImpl implements ChatHistoryRepository {
     }
 
     @Override
+    public void deleteShortTermByBranch(int branch) {
+        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
+    }
+
+    @Override
+    public void deleteMidTermByBranch(int branch) {
+        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
+    }
+
+    @Override
+    public void deleteLongTermByBranch(int branch) {
+        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
+    }
+
+    @Override
     public void deleteAll() {
         deleteAll(DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
         deleteAll(DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);

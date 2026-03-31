@@ -14,6 +14,9 @@ public interface ChatHistoryRepository {
     List<ChatMessage> findLongTermByBranch(int branch);
 
     void deleteByBranch(int branch);
+    void deleteShortTermByBranch(int branch);
+    void deleteMidTermByBranch(int branch);
+    void deleteLongTermByBranch(int branch);
     void deleteAll();
 
     int getMaxBranch();
