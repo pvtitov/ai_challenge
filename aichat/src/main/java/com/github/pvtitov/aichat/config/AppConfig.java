@@ -22,7 +22,9 @@ public class AppConfig {
     @Bean
     public JdbcTemplate jdbcTemplate(DataSource dataSource) {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
-        jdbcTemplate.execute(DatabaseConstants.CREATE_CHAT_HISTORY_TABLE);
+        jdbcTemplate.execute(DatabaseConstants.CREATE_CHAT_HISTORY_SHORT_TERM_TABLE);
+        jdbcTemplate.execute(DatabaseConstants.CREATE_CHAT_HISTORY_MID_TERM_TABLE);
+        jdbcTemplate.execute(DatabaseConstants.CREATE_CHAT_HISTORY_LONG_TERM_TABLE);
         return jdbcTemplate;
     }
 }

@@ -5,16 +5,18 @@ import com.github.pvtitov.aichat.model.ChatMessage;
 import java.util.List;
 
 public interface ChatHistoryRepository {
+    void saveShortTerm(ChatMessage message);
+    void saveMidTerm(ChatMessage message);
+    void saveLongTerm(ChatMessage message);
 
-    void save(ChatMessage message);
-
-    List<ChatMessage> findByBranch(int branch);
+    List<ChatMessage> findShortTermByBranch(int branch);
+    List<ChatMessage> findMidTermByBranch(int branch);
+    List<ChatMessage> findLongTermByBranch(int branch);
 
     void deleteByBranch(int branch);
+    void deleteAll();
 
     int getMaxBranch();
-
     List<Integer> getBranches();
-
     long getCumulativeTokens(int branch);
 }

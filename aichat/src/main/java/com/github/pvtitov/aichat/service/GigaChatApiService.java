@@ -1,6 +1,8 @@
 package com.github.pvtitov.aichat.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.pvtitov.aichat.constants.ApiConstants;
+import com.github.pvtitov.aichat.dto.GigaChatComplexResponse;
 import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -19,6 +21,7 @@ public class GigaChatApiService {
     private String apiCredentials;
     private String accessToken;
     private long tokenExpiryTime;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public GigaChatApiService() {
         this.apiCredentials = System.getenv(ApiConstants.GIGACHAT_API_CREDENTIALS_ENV);
@@ -27,16 +30,32 @@ public class GigaChatApiService {
         }
     }
 
-    public String getCompletion(JSONArray messages) throws IOException {
+    public GigaChatComplexResponse getCompletion(JSONArray messages, String userInput) throws IOException {
         OkHttpClient client = getUnsafeOkHttpClientBuilder().build();
         MediaType mediaType = MediaType.parse("application/json");
+
+        String prompt = "Based on the following conversation history:\n" +
+                messages.toString() + "\n\n" +
+                "And the user's latest message:\n" +
+                "\"" + userInput + "\"\n\n" +
+                "Please provide a JSON response with three fields:\n" +
+                "1. \"full_response\": A detailed, complete answer to the user's message.\n" +
+                "2. \"summary\": A concise, one-sentence summary of your full response.\n" +
+                "3. \"sticky_facts\": A list of key facts, names, or important pieces of information from your response that should be remembered for future interactions.";
+
+        JSONObject userMessage = new JSONObject();
+        userMessage.put("role", "user");
+        userMessage.put("content", prompt);
+
+        JSONArray requestMessages = new JSONArray();
+        requestMessages.put(userMessage);
 
         JSONObject requestBody = new JSONObject();
         requestBody.put("model", "GigaChat:latest");
         requestBody.put("temperature", 0.7);
         requestBody.put("n", 1);
-        requestBody.put("max_tokens", 512);
-        requestBody.put("messages", messages);
+        requestBody.put("max_tokens", 2048); // Increased max_tokens for complex response
+        requestBody.put("messages", requestMessages);
 
         RequestBody body = RequestBody.create(requestBody.toString(), mediaType);
         Request request = new Request.Builder()
@@ -53,7 +72,18 @@ public class GigaChatApiService {
             }
 
             JSONObject jsonResponse = new JSONObject(responseBody);
-            return jsonResponse.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
+            String content = jsonResponse.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
+
+            // Clean the content to be valid JSON
+            content = content.replaceAll("```json", "").replaceAll("```", "").trim();
+
+            try {
+                GigaChatComplexResponse complexResponse = objectMapper.readValue(content, GigaChatComplexResponse.class);
+                return complexResponse;
+            } catch (Exception e) {
+                // If parsing fails, return the raw content in the full_response and empty strings for others
+                return new GigaChatComplexResponse(content, "", "");
+            }
         }
     }
 

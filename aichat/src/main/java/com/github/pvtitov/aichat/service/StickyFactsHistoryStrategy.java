@@ -1,19 +1,18 @@
 package com.github.pvtitov.aichat.service;
 
 import com.github.pvtitov.aichat.model.ChatMessage;
-import com.github.pvtitov.aichat.repository.ChatHistoryRepository;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.function.Function;
 
-@Component("stickyFactsHistoryStrategy")
 public class StickyFactsHistoryStrategy implements HistoryStrategy {
 
     @Override
-    public JSONArray getHistory(ChatHistoryRepository repository, int branch) {
-        List<ChatMessage> messages = repository.findByBranch(branch);
+    public JSONArray getHistory(Function<Integer, List<ChatMessage>> findByBranch, int branch) {
+        List<ChatMessage> messages = findByBranch.apply(branch);
         JSONArray jsonArray = new JSONArray();
         if (!messages.isEmpty()) {
             ChatMessage lastMessage = messages.get(messages.size() - 1);
