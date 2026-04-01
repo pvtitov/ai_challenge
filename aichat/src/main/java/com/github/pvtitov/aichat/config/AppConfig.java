@@ -25,6 +25,7 @@ public class AppConfig {
         jdbcTemplate.execute(DatabaseConstants.CREATE_CHAT_HISTORY_SHORT_TERM_TABLE);
         jdbcTemplate.execute(DatabaseConstants.CREATE_CHAT_HISTORY_MID_TERM_TABLE);
         jdbcTemplate.execute(DatabaseConstants.CREATE_CHAT_HISTORY_LONG_TERM_TABLE);
+        jdbcTemplate.execute(DatabaseConstants.CREATE_PROFILE_TABLE);
         return jdbcTemplate;
     }
 }

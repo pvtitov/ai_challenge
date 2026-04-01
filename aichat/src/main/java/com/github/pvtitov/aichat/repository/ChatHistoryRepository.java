@@ -9,17 +9,17 @@ public interface ChatHistoryRepository {
     void saveMidTerm(ChatMessage message);
     void saveLongTerm(ChatMessage message);
 
-    List<ChatMessage> findShortTermByBranch(int branch);
-    List<ChatMessage> findMidTermByBranch(int branch);
-    List<ChatMessage> findLongTermByBranch(int branch);
+    List<ChatMessage> findShortTermByBranch(int branch, String profileLogin);
+    List<ChatMessage> findMidTermByBranch(int branch, String profileLogin);
+    List<ChatMessage> findLongTermByBranch(int branch, String profileLogin);
 
-    void deleteByBranch(int branch);
-    void deleteShortTermByBranch(int branch);
-    void deleteMidTermByBranch(int branch);
-    void deleteLongTermByBranch(int branch);
-    void deleteAll();
+    void deleteByBranch(int branch, String profileLogin);
+    void deleteShortTermByBranch(int branch, String profileLogin);
+    void deleteMidTermByBranch(int branch, String profileLogin);
+    void deleteLongTermByBranch(int branch, String profileLogin);
+    void deleteAll(String profileLogin);
 
-    int getMaxBranch();
-    List<Integer> getBranches();
-    long getCumulativeTokens(int branch);
+    int getMaxBranch(String profileLogin);
+    List<Integer> getBranches(String profileLogin);
+    long getCumulativeTokens(int branch, String profileLogin);
 }

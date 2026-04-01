@@ -11,6 +11,7 @@ public class ChatMessage {
     private Integer promptTokens;
     private Integer completionTokens;
     private Integer totalTokens;
+    private String profileLogin;
     private LocalDateTime timestamp;
 
     // Getters and setters
@@ -69,6 +70,14 @@ public class ChatMessage {
 
     public void setTotalTokens(Integer totalTokens) {
         this.totalTokens = totalTokens;
+    }
+
+    public String getProfileLogin() {
+        return profileLogin;
+    }
+
+    public void setProfileLogin(String profileLogin) {
+        this.profileLogin = profileLogin;
     }
 
     public LocalDateTime getTimestamp() {

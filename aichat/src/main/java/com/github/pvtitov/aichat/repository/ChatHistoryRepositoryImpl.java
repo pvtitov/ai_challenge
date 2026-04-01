@@ -34,88 +34,88 @@ public class ChatHistoryRepositoryImpl implements ChatHistoryRepository {
     }
 
     @Override
-    public List<ChatMessage> findShortTermByBranch(int branch) {
-        return findByBranch(branch, DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
+    public List<ChatMessage> findShortTermByBranch(int branch, String profileLogin) {
+        return findByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
     }
 
     @Override
-    public List<ChatMessage> findMidTermByBranch(int branch) {
-        return findByBranch(branch, DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
+    public List<ChatMessage> findMidTermByBranch(int branch, String profileLogin) {
+        return findByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
     }
 
     @Override
-    public List<ChatMessage> findLongTermByBranch(int branch) {
-        return findByBranch(branch, DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
+    public List<ChatMessage> findLongTermByBranch(int branch, String profileLogin) {
+        return findByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
     }
 
     @Override
-    public void deleteByBranch(int branch) {
-        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
-        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
-        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
+    public void deleteByBranch(int branch, String profileLogin) {
+        deleteByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
+        deleteByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
+        deleteByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
     }
 
     @Override
-    public void deleteShortTermByBranch(int branch) {
-        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
+    public void deleteShortTermByBranch(int branch, String profileLogin) {
+        deleteByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
     }
 
     @Override
-    public void deleteMidTermByBranch(int branch) {
-        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
+    public void deleteMidTermByBranch(int branch, String profileLogin) {
+        deleteByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
     }
 
     @Override
-    public void deleteLongTermByBranch(int branch) {
-        deleteByBranch(branch, DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
+    public void deleteLongTermByBranch(int branch, String profileLogin) {
+        deleteByBranch(branch, profileLogin, DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
     }
 
     @Override
-    public void deleteAll() {
-        deleteAll(DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
-        deleteAll(DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
-        deleteAll(DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
+    public void deleteAll(String profileLogin) {
+        deleteAll(profileLogin, DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE);
+        deleteAll(profileLogin, DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE);
+        deleteAll(profileLogin, DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE);
     }
 
     @Override
-    public int getMaxBranch() {
-        String sql = "SELECT MAX(branch) FROM " + DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE;
-        Integer maxBranch = jdbcTemplate.queryForObject(sql, Integer.class);
+    public int getMaxBranch(String profileLogin) {
+        String sql = "SELECT MAX(branch) FROM " + DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE + " WHERE profile_login = ?";
+        Integer maxBranch = jdbcTemplate.queryForObject(sql, Integer.class, profileLogin);
         return maxBranch == null ? 0 : maxBranch;
     }
 
     @Override
-    public List<Integer> getBranches() {
-        String sql = "SELECT DISTINCT branch FROM " + DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE + " ORDER BY branch";
-        return jdbcTemplate.queryForList(sql, Integer.class);
+    public List<Integer> getBranches(String profileLogin) {
+        String sql = "SELECT DISTINCT branch FROM " + DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE + " WHERE profile_login = ? ORDER BY branch";
+        return jdbcTemplate.queryForList(sql, Integer.class, profileLogin);
     }
 
     @Override
-    public long getCumulativeTokens(int branch) {
-        String sql = "SELECT SUM(total_tokens) FROM " + DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE + " WHERE branch = ?";
-        Long cumulativeTokens = jdbcTemplate.queryForObject(sql, Long.class, branch);
+    public long getCumulativeTokens(int branch, String profileLogin) {
+        String sql = "SELECT SUM(total_tokens) FROM " + DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE + " WHERE branch = ? AND profile_login = ?";
+        Long cumulativeTokens = jdbcTemplate.queryForObject(sql, Long.class, branch, profileLogin);
         return cumulativeTokens == null ? 0 : cumulativeTokens;
     }
 
     private void save(ChatMessage message, String tableName) {
-        String sql = "INSERT INTO " + tableName + " (branch, role, content, prompt_tokens, completion_tokens, total_tokens) VALUES (?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO " + tableName + " (branch, role, content, prompt_tokens, completion_tokens, total_tokens, profile_login) VALUES (?, ?, ?, ?, ?, ?, ?)";
         jdbcTemplate.update(sql, message.getBranch(), message.getRole(), message.getContent(),
-                message.getPromptTokens(), message.getCompletionTokens(), message.getTotalTokens());
+                message.getPromptTokens(), message.getCompletionTokens(), message.getTotalTokens(), message.getProfileLogin());
     }
 
-    private List<ChatMessage> findByBranch(int branch, String tableName) {
-        String sql = "SELECT * FROM " + tableName + " WHERE branch = ? ORDER BY timestamp";
-        return jdbcTemplate.query(sql, this::mapRowToChatMessage, branch);
+    private List<ChatMessage> findByBranch(int branch, String profileLogin, String tableName) {
+        String sql = "SELECT * FROM " + tableName + " WHERE branch = ? AND profile_login = ? ORDER BY timestamp";
+        return jdbcTemplate.query(sql, this::mapRowToChatMessage, branch, profileLogin);
     }
 
-    private void deleteByBranch(int branch, String tableName) {
-        String sql = "DELETE FROM " + tableName + " WHERE branch = ?";
-        jdbcTemplate.update(sql, branch);
+    private void deleteByBranch(int branch, String profileLogin, String tableName) {
+        String sql = "DELETE FROM " + tableName + " WHERE branch = ? AND profile_login = ?";
+        jdbcTemplate.update(sql, branch, profileLogin);
     }
 
-    private void deleteAll(String tableName) {
-        String sql = "DELETE FROM " + tableName;
-        jdbcTemplate.update(sql);
+    private void deleteAll(String profileLogin, String tableName) {
+        String sql = "DELETE FROM " + tableName + " WHERE profile_login = ?";
+        jdbcTemplate.update(sql, profileLogin);
     }
 
     private ChatMessage mapRowToChatMessage(ResultSet rs, int rowNum) throws SQLException {
@@ -136,6 +136,7 @@ public class ChatHistoryRepositoryImpl implements ChatHistoryRepository {
         if (!rs.wasNull()) {
             message.setTotalTokens(totalTokens);
         }
+        message.setProfileLogin(rs.getString("profile_login"));
         message.setTimestamp(rs.getTimestamp("timestamp").toLocalDateTime());
         return message;
     }
