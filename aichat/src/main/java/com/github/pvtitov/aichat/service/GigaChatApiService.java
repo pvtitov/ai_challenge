@@ -75,7 +75,7 @@ public class GigaChatApiService {
             String content = jsonResponse.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
 
             // Clean the content to be valid JSON
-            content = content.replaceAll("```json", "").replaceAll("```", "").trim();
+            content = extractJson(content);
 
             try {
                 GigaChatComplexResponse complexResponse = objectMapper.readValue(content, GigaChatComplexResponse.class);
@@ -88,6 +88,35 @@ public class GigaChatApiService {
                 complexResponse.setStickyFacts("");
                 return complexResponse;
             }
+        }
+    }
+
+    private String extractJson(String rawString) {
+        StringBuilder result = new StringBuilder();
+        boolean isStartedJson = false;
+        boolean isEndedJson = false;
+        char currentChar;
+        for (int i = 0; i < rawString.length(); i++) {
+            currentChar = rawString.charAt(i);
+            if (!isStartedJson) {
+                isStartedJson = currentChar == '{';
+            }
+            if (isStartedJson) {
+                result.append(currentChar);
+            }
+        }
+        for (int i = result.length() - 1; i >= 0 ; i--) {
+            if (!isEndedJson) {
+                isEndedJson = rawString.charAt(i) == '}';
+            }
+            if (!isStartedJson) {
+                result.deleteCharAt(i);
+            }
+        }
+        if (isStartedJson && isEndedJson) {
+            return result.toString();
+        } else {
+            return rawString;
         }
     }
 
