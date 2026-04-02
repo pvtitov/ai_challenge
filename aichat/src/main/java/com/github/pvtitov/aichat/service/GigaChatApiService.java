@@ -31,30 +31,32 @@ public class GigaChatApiService {
     }
 
     public GigaChatComplexResponse getCompletion(JSONArray messages, String userInput) throws IOException {
-        OkHttpClient client = getUnsafeOkHttpClientBuilder().build();
-        MediaType mediaType = MediaType.parse("application/json");
-
-        String prompt = "Based on the following conversation history:\n" +
-                messages.toString() + "\n\n" +
-                "And the user's latest message:\n" +
-                "\"" + userInput + "\"\n\n" +
-                "Please provide a JSON response with three fields:\n" +
-                "1. \"full_response\": A detailed, complete answer to the user's message.\n" +
-                "2. \"summary\": A concise, one-sentence summary of your full response.\n" +
-                "3. \"sticky_facts\": A list of key facts, names, or important pieces of information from your response that should be remembered for future interactions.";
+        // The prompt now directly comes from the service layer
+        String prompt = userInput;
 
         JSONObject userMessage = new JSONObject();
         userMessage.put("role", "user");
         userMessage.put("content", prompt);
 
+        // The messages array from history is now prepended to the request
         JSONArray requestMessages = new JSONArray();
+        for (int i = 0; i < messages.length(); i++) {
+            requestMessages.put(messages.get(i));
+        }
         requestMessages.put(userMessage);
+
+        return callGigaChat(requestMessages);
+    }
+
+    private GigaChatComplexResponse callGigaChat(JSONArray requestMessages) throws IOException {
+        OkHttpClient client = getUnsafeOkHttpClientBuilder().build();
+        MediaType mediaType = MediaType.parse("application/json");
 
         JSONObject requestBody = new JSONObject();
         requestBody.put("model", "GigaChat:latest");
         requestBody.put("temperature", 0.7);
         requestBody.put("n", 1);
-        requestBody.put("max_tokens", 2048); // Increased max_tokens for complex response
+        requestBody.put("max_tokens", 2048);
         requestBody.put("messages", requestMessages);
 
         RequestBody body = RequestBody.create(requestBody.toString(), mediaType);
@@ -74,30 +76,21 @@ public class GigaChatApiService {
             JSONObject jsonResponse = new JSONObject(responseBody);
             String content = jsonResponse.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
 
-            Integer promptTokens = null;
-            Integer completionTokens = null;
-            Integer totalTokens = null;
+            Integer promptTokens = jsonResponse.has("usage") ? jsonResponse.getJSONObject("usage").optInt("prompt_tokens", 0) : 0;
+            Integer completionTokens = jsonResponse.has("usage") ? jsonResponse.getJSONObject("usage").optInt("completion_tokens", 0) : 0;
+            Integer totalTokens = jsonResponse.has("usage") ? jsonResponse.getJSONObject("usage").optInt("total_tokens", 0) : 0;
 
-            if (jsonResponse.has("usage")) {
-                JSONObject usage = jsonResponse.getJSONObject("usage");
-                promptTokens = usage.optInt("prompt_tokens", 0);
-                completionTokens = usage.optInt("completion_tokens", 0);
-                totalTokens = usage.optInt("total_tokens", 0);
-            }
-
-            // Clean the content to be valid JSON
-            content = extractJson(content);
-
+            // Try to parse as complex response, otherwise return as plain text
             try {
-                GigaChatComplexResponse complexResponse = objectMapper.readValue(content, GigaChatComplexResponse.class);
+                String jsonPart = extractJson(content);
+                GigaChatComplexResponse complexResponse = objectMapper.readValue(jsonPart, GigaChatComplexResponse.class);
                 complexResponse.setPromptTokens(promptTokens);
                 complexResponse.setCompletionTokens(completionTokens);
                 complexResponse.setTotalTokens(totalTokens);
                 return complexResponse;
             } catch (Exception e) {
-                // If parsing fails, return the raw content in the full_response and empty strings for others
                 GigaChatComplexResponse complexResponse = new GigaChatComplexResponse();
-                complexResponse.setFullResponse(content);
+                complexResponse.setFullResponse(content); // Return raw content if not a JSON object
                 complexResponse.setSummary("");
                 complexResponse.setStickyFacts("");
                 complexResponse.setPromptTokens(promptTokens);
@@ -109,32 +102,12 @@ public class GigaChatApiService {
     }
 
     private String extractJson(String rawString) {
-        StringBuilder result = new StringBuilder();
-        boolean isStartedJson = false;
-        boolean isEndedJson = false;
-        char currentChar;
-        for (int i = 0; i < rawString.length(); i++) {
-            currentChar = rawString.charAt(i);
-            if (!isStartedJson) {
-                isStartedJson = currentChar == '{';
-            }
-            if (isStartedJson) {
-                result.append(currentChar);
-            }
+        int startIndex = rawString.indexOf('{');
+        int endIndex = rawString.lastIndexOf('}');
+        if (startIndex != -1 && endIndex != -1 && startIndex < endIndex) {
+            return rawString.substring(startIndex, endIndex + 1);
         }
-        for (int i = result.length() - 1; i >= 0 ; i--) {
-            if (!isEndedJson) {
-                isEndedJson = rawString.charAt(i) == '}';
-            }
-            if (!isStartedJson) {
-                result.deleteCharAt(i);
-            }
-        }
-        if (isStartedJson && isEndedJson) {
-            return result.toString();
-        } else {
-            return rawString;
-        }
+        return rawString; // Return original if no JSON object is found
     }
 
     private synchronized void fetchNewAccessToken() throws IOException {

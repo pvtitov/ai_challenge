@@ -5,16 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Chat</title>
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 1rem; }
-        #chat-log { border: 1px solid #ccc; padding: 1rem; margin-bottom: 1rem; height: 400px; overflow-y: scroll; }
+        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 1rem; background-color: #f7f7f7; }
+        h1 { text-align: center; color: #333; }
+        #chat-log { border: 1px solid #ccc; padding: 1rem; margin-bottom: 1rem; height: 500px; overflow-y: scroll; background-color: #fff; border-radius: 8px; }
         #chat-form { display: flex; }
-        #prompt-input { flex-grow: 1; padding: 0.5rem; }
-        #send-button { padding: 0.5rem 1rem; }
-        .message { margin-bottom: 1rem; }
+        #prompt-input { flex-grow: 1; padding: 0.75rem; border: 1px solid #ccc; border-radius: 8px 0 0 8px; }
+        #prompt-input:disabled { background-color: #eee; }
+        #send-button { padding: 0.75rem 1.5rem; border: none; background-color: #007bff; color: white; border-radius: 0 8px 8px 0; cursor: pointer; }
+        #send-button:disabled { background-color: #a0cfff; }
+        .message { margin-bottom: 1rem; padding: 0.75rem; border-radius: 8px; }
         .message .role { font-weight: bold; }
-        .message .tokens { font-size: 0.8rem; color: #888; }
-        .summary { font-style: italic; color: #555; }
-        .sticky-facts { font-weight: bold; color: #333; }
+        .message .tokens { font-size: 0.8rem; color: #888; margin-top: 0.5rem; }
+        .user-message { background-color: #e1f5fe; text-align: right; }
+        .agent-message { background-color: #f1f1f1; }
+        .info-message { background-color: #fffbe1; text-align: center; font-style: italic; }
+        .summary { font-style: italic; color: #555; margin-top: 0.5rem; }
+        .sticky-facts { font-weight: bold; color: #333; margin-top: 0.5rem; }
+        #confirmation-area { margin-top: 1rem; text-align: center; display: none; }
+        #confirmation-area button { padding: 0.5rem 1.5rem; margin: 0 0.5rem; border: 1px solid #ccc; border-radius: 8px; cursor: pointer; }
+        #yes-button { background-color: #28a745; color: white; }
+        #no-button { background-color: #dc3545; color: white; }
     </style>
 </head>
 <body>
@@ -24,44 +34,88 @@
         <input type="text" id="prompt-input" placeholder="Enter your message..." autocomplete="off">
         <button id="send-button" type="submit">Send</button>
     </form>
+    <div id="confirmation-area">
+        <p>Should I proceed?</p>
+        <button id="yes-button">Yes</button>
+        <button id="no-button">No</button>
+    </div>
 
     <script>
         const chatLog = document.getElementById('chat-log');
         const chatForm = document.getElementById('chat-form');
         const promptInput = document.getElementById('prompt-input');
+        const sendButton = document.getElementById('send-button');
+        const confirmationArea = document.getElementById('confirmation-area');
+        const yesButton = document.getElementById('yes-button');
+        const noButton = document.getElementById('no-button');
 
         chatForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const userInput = promptInput.value.trim();
             if (!userInput) return;
+            await sendMessage(userInput);
+        });
 
-            addMessageToLog('You', userInput);
+        yesButton.addEventListener('click', () => handleConfirmation('y'));
+        noButton.addEventListener('click', () => handleConfirmation('n'));
+
+        async function handleConfirmation(choice) {
+            addMessageToLog('You', choice, null, 'user-message');
+            toggleControls(false); // Disable controls while processing confirmation
+            await sendMessage(choice);
+        }
+
+        async function sendMessage(prompt) {
+            addMessageToLog('You', prompt, null, 'user-message');
             promptInput.value = '';
+            toggleControls(true); // Disable controls during request
 
             try {
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: userInput })
+                    body: JSON.stringify({ prompt: prompt })
                 });
 
                 if (!response.ok) {
                     const errorText = await response.text();
                     addMessageToLog('Error', `Failed to get response: ${errorText}`);
+                    toggleControls(false); // Re-enable on error
                     return;
                 }
 
                 const data = await response.json();
-                addMessageToLog('Agent', data.fullResponse, data);
+                const messageType = data.responseType === 'INFO' ? 'info-message' : 'agent-message';
+                addMessageToLog('Agent', data.fullResponse, data, messageType);
+
+                if (data.requiresConfirmation) {
+                    toggleControls(true, true); // Disable input, show confirmation
+                } else {
+                    toggleControls(false); // Re-enable input, hide confirmation
+                }
 
             } catch (error) {
                 addMessageToLog('Error', `An error occurred: ${error.message}`);
+                toggleControls(false); // Re-enable on error
             }
-        });
+        }
 
-        function addMessageToLog(role, content, data) {
+        function toggleControls(disabled, showConfirmation = false) {
+            promptInput.disabled = disabled;
+            sendButton.disabled = disabled;
+            if (showConfirmation) {
+                confirmationArea.style.display = 'block';
+            } else {
+                confirmationArea.style.display = 'none';
+            }
+        }
+
+        function addMessageToLog(role, content, data, messageClass) {
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message');
+            if (messageClass) {
+                messageDiv.classList.add(messageClass);
+            }
 
             const roleSpan = document.createElement('span');
             roleSpan.classList.add('role');
@@ -69,10 +123,12 @@
             messageDiv.appendChild(roleSpan);
 
             const contentSpan = document.createElement('span');
-            contentSpan.textContent = content;
-            messageDiv.appendChild(contentSpan);
+            // Use <pre> for agent messages to preserve formatting like newlines
+            const contentElement = (role === 'Agent') ? document.createElement('pre') : document.createElement('span');
+            contentElement.textContent = content;
+            messageDiv.appendChild(contentElement);
 
-            if (data && role === 'Agent') {
+            if (data && role === 'Agent' && data.responseType === 'FINAL') {
                 if (data.summary) {
                     const summaryDiv = document.createElement('div');
                     summaryDiv.classList.add('summary');

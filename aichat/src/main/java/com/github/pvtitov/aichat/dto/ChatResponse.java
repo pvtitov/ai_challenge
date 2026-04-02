@@ -10,6 +10,8 @@ public class ChatResponse {
     private int completionTokens;
     private int totalTokens;
     private long cumulativeTokens;
+    private ResponseType responseType = ResponseType.FINAL;
+    private boolean requiresConfirmation = false;
 
     public ChatResponse() {
     }
@@ -22,6 +24,12 @@ public class ChatResponse {
         this.completionTokens = completionTokens;
         this.totalTokens = totalTokens;
         this.cumulativeTokens = cumulativeTokens;
+    }
+    
+    public ChatResponse(String infoMessage) {
+        this.fullResponse = infoMessage;
+        this.responseType = ResponseType.INFO;
+        this.requiresConfirmation = false;
     }
 
     public String getFullResponse() {
@@ -80,6 +88,22 @@ public class ChatResponse {
         this.cumulativeTokens = cumulativeTokens;
     }
 
+    public ResponseType getResponseType() {
+        return responseType;
+    }
+
+    public void setResponseType(ResponseType responseType) {
+        this.responseType = responseType;
+    }
+
+    public boolean isRequiresConfirmation() {
+        return requiresConfirmation;
+    }
+
+    public void setRequiresConfirmation(boolean requiresConfirmation) {
+        this.requiresConfirmation = requiresConfirmation;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -89,14 +113,16 @@ public class ChatResponse {
                 completionTokens == that.completionTokens &&
                 totalTokens == that.totalTokens &&
                 cumulativeTokens == that.cumulativeTokens &&
+                requiresConfirmation == that.requiresConfirmation &&
                 Objects.equals(fullResponse, that.fullResponse) &&
                 Objects.equals(summary, that.summary) &&
-                Objects.equals(stickyFacts, that.stickyFacts);
+                Objects.equals(stickyFacts, that.stickyFacts) &&
+                responseType == that.responseType;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(fullResponse, summary, stickyFacts, promptTokens, completionTokens, totalTokens, cumulativeTokens);
+        return Objects.hash(fullResponse, summary, stickyFacts, promptTokens, completionTokens, totalTokens, cumulativeTokens, responseType, requiresConfirmation);
     }
 
     @Override
@@ -109,6 +135,8 @@ public class ChatResponse {
                 ", completionTokens=" + completionTokens +
                 ", totalTokens=" + totalTokens +
                 ", cumulativeTokens=" + cumulativeTokens +
+                ", responseType=" + responseType +
+                ", requiresConfirmation=" + requiresConfirmation +
                 '}';
     }
 }

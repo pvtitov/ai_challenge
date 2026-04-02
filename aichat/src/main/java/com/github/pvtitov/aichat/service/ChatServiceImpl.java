@@ -1,9 +1,10 @@
 package com.github.pvtitov.aichat.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.pvtitov.aichat.dto.ChatResponse;
-import com.github.pvtitov.aichat.dto.GigaChatComplexResponse;
+import com.github.pvtitov.aichat.dto.*;
+import com.github.pvtitov.aichat.dto.state.ChatState;
+import com.github.pvtitov.aichat.dto.state.ConversationState;
+import com.github.pvtitov.aichat.dto.state.Stage;
 import com.github.pvtitov.aichat.model.ChatMessage;
 import com.github.pvtitov.aichat.model.Profile;
 import com.github.pvtitov.aichat.repository.ChatHistoryRepository;
@@ -11,13 +12,11 @@ import com.github.pvtitov.aichat.repository.ProfileRepository;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
-import org.springframework.ui.Model;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Service
 public class ChatServiceImpl implements ChatService {
@@ -43,62 +42,140 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public ChatResponse process(String userInput, String profileLogin, Model model) throws IOException {
-        Optional<Profile> currentProfileOptional = profileRepository.findByLogin(profileLogin);
-        Profile currentProfile = currentProfileOptional.orElseGet(() -> {
-            Profile newProfile = new Profile(profileLogin, "");
-            profileRepository.save(newProfile);
-            return newProfile;
-        });
+    public ChatResponse process(ChatRequest request, ChatState chatState) throws IOException {
+        String userInput = request.getPrompt();
+        ConversationState conversationState = chatState.getConversationState();
 
-        if (userInput.startsWith("/")) {
-            String commandResult = handleCommand(userInput, currentProfile, model);
-            return new ChatResponse(commandResult, "", "", 0, 0, 0, 0);
+        // Ensure profile is handled correctly
+        Profile currentProfile = chatState.getCurrentProfile();
+        if (currentProfile == null) {
+            // Default to an empty profile login if none is set
+            String profileLogin = "";
+            Optional<Profile> profileOpt = profileRepository.findByLogin(profileLogin);
+            currentProfile = profileOpt.orElseGet(() -> {
+                Profile newProfile = new Profile(profileLogin, "");
+                profileRepository.save(newProfile);
+                return newProfile;
+            });
+            chatState.setCurrentProfile(currentProfile);
         }
 
-        String effectiveUserInput = currentProfile.getProfileData().isEmpty() ? userInput : currentProfile.getProfileData() + "\n" + userInput;
+        if (userInput.startsWith("/")) {
+            return new ChatResponse(handleCommand(userInput, chatState));
+        }
 
-        List<ChatMessage> shortTermHistory = chatHistoryRepository.findShortTermByBranch(currentProfile.getCurrentBranch(), profileLogin);
-        List<ChatMessage> midTermHistory = chatHistoryRepository.findMidTermByBranch(currentProfile.getCurrentBranch(), profileLogin);
-        List<ChatMessage> longTermHistory = chatHistoryRepository.findLongTermByBranch(currentProfile.getCurrentBranch(), profileLogin);
+        switch (conversationState.getStage()) {
+            case AWAITING_PLAN_APPROVAL:
+                return handlePlanApproval(userInput, conversationState, currentProfile);
+            case AWAITING_ACTION_APPROVAL:
+                return handleActionApproval(userInput, conversationState, currentProfile);
+            case AWAITING_PROMPT:
+            default:
+                return handleAwaitingPrompt(userInput, conversationState, currentProfile);
+        }
+    }
+
+    private ChatResponse handleAwaitingPrompt(String userInput, ConversationState conversationState, Profile currentProfile) throws IOException {
+        conversationState.setOriginalPrompt(userInput);
+
+        String planPrompt = "You are a planning AI. Based on the user's request, create a step-by-step plan. The user's request is: \"" + userInput + "\". Respond with the plan only.";
+        GigaChatComplexResponse planResponse = gigaChatApiService.getCompletion(new JSONArray(), planPrompt);
+        String plan = planResponse.getFullResponse();
+        conversationState.setLastPlan(plan);
+        conversationState.setStage(Stage.AWAITING_PLAN_APPROVAL);
+
+        ChatResponse response = new ChatResponse(plan);
+        response.setResponseType(ResponseType.PLAN);
+        response.setRequiresConfirmation(true);
+        return response;
+    }
+
+    private ChatResponse handlePlanApproval(String confirmation, ConversationState conversationState, Profile currentProfile) throws IOException {
+        if (!"y".equalsIgnoreCase(confirmation)) {
+            conversationState.reset();
+            return new ChatResponse("Plan rejected. Please provide a new prompt.");
+        }
+
+        String plan = conversationState.getLastPlan();
+        String actionPrompt = "You are an executing AI. Carry out the following plan: \"" + plan + "\". The original user request was: \"" + conversationState.getOriginalPrompt() + "\".";
+        
+        // Include history in the action prompt
+        JSONArray history = getHistoryAsJson(currentProfile);
+        GigaChatComplexResponse actionResponse = gigaChatApiService.getCompletion(history, actionPrompt);
+        String actionResult = actionResponse.getFullResponse();
+
+        conversationState.setStage(Stage.AWAITING_ACTION_APPROVAL);
+
+        ChatResponse response = new ChatResponse(actionResult);
+        response.setResponseType(ResponseType.ACTION_RESULT);
+        response.setRequiresConfirmation(true);
+        return response;
+    }
+
+    private ChatResponse handleActionApproval(String confirmation, ConversationState conversationState, Profile currentProfile) throws IOException {
+        if (!"y".equalsIgnoreCase(confirmation)) {
+            conversationState.reset();
+            return new ChatResponse("Action aborted. Please provide a new prompt.");
+        }
+
+        String verificationPrompt = "You are a verification AI. Please review the original request, the plan, and the action's result. Verify if the task is complete and correct. Original request: \"" + conversationState.getOriginalPrompt() + "\". Plan: \"" + conversationState.getLastPlan() + "\".";
+        
+        // Include history in the verification prompt
+        JSONArray history = getHistoryAsJson(currentProfile);
+        GigaChatComplexResponse verificationResponse = gigaChatApiService.getCompletion(history, verificationPrompt);
+
+        // Save messages to history
+        saveConversationToHistory(conversationState.getOriginalPrompt(), verificationResponse.getFullResponse(), currentProfile);
+        
+        long cumulativeTokens = chatHistoryRepository.getCumulativeTokens(currentProfile.getCurrentBranch(), currentProfile.getLogin());
+        
+        // Reset for the next interaction
+        conversationState.reset();
+
+        return new ChatResponse(
+            verificationResponse.getFullResponse(),
+            verificationResponse.getSummary(),
+            verificationResponse.getStickyFacts(),
+            verificationResponse.getPromptTokens(),
+            verificationResponse.getCompletionTokens(),
+            verificationResponse.getTotalTokens(),
+            cumulativeTokens
+        );
+    }
+
+    private void saveConversationToHistory(String userInput, String assistantResponse, Profile profile) {
+        ChatMessage userMessage = new ChatMessage();
+        userMessage.setRole("user");
+        userMessage.setContent(userInput);
+        userMessage.setBranch(profile.getCurrentBranch());
+        userMessage.setProfileLogin(profile.getLogin());
+
+        ChatMessage assistantMessage = new ChatMessage();
+        assistantMessage.setRole("assistant");
+        assistantMessage.setContent(assistantResponse);
+        assistantMessage.setBranch(profile.getCurrentBranch());
+        assistantMessage.setProfileLogin(profile.getLogin());
+
+        List<ChatMessage> shortTermHistory = chatHistoryRepository.findShortTermByBranch(profile.getCurrentBranch(), profile.getLogin());
+        updateHistory(shortTermHistory, userMessage, assistantMessage, shortTermStrategy, chatHistoryRepository::saveShortTerm, (branch, pLogin) -> chatHistoryRepository.deleteShortTermByBranch(branch, pLogin), profile.getCurrentBranch(), profile.getLogin());
+        
+        List<ChatMessage> midTermHistory = chatHistoryRepository.findMidTermByBranch(profile.getCurrentBranch(), profile.getLogin());
+        updateHistory(midTermHistory, userMessage, assistantMessage, midTermStrategy, chatHistoryRepository::saveMidTerm, (branch, pLogin) -> chatHistoryRepository.deleteMidTermByBranch(branch, pLogin), profile.getCurrentBranch(), profile.getLogin());
+
+        List<ChatMessage> longTermHistory = chatHistoryRepository.findLongTermByBranch(profile.getCurrentBranch(), profile.getLogin());
+        updateHistory(longTermHistory, userMessage, assistantMessage, longTermStrategy, chatHistoryRepository::saveLongTerm, (branch, pLogin) -> chatHistoryRepository.deleteLongTermByBranch(branch, pLogin), profile.getCurrentBranch(), profile.getLogin());
+    }
+    
+    private JSONArray getHistoryAsJson(Profile currentProfile) {
+        List<ChatMessage> shortTermHistory = chatHistoryRepository.findShortTermByBranch(currentProfile.getCurrentBranch(), currentProfile.getLogin());
+        List<ChatMessage> midTermHistory = chatHistoryRepository.findMidTermByBranch(currentProfile.getCurrentBranch(), currentProfile.getLogin());
+        List<ChatMessage> longTermHistory = chatHistoryRepository.findLongTermByBranch(currentProfile.getCurrentBranch(), currentProfile.getLogin());
 
         JSONArray combinedHistory = new JSONArray();
         longTermHistory.forEach(msg -> combinedHistory.put(new JSONObject().put("role", msg.getRole()).put("content", msg.getContent())));
         midTermHistory.forEach(msg -> combinedHistory.put(new JSONObject().put("role", msg.getRole()).put("content", msg.getContent())));
         shortTermHistory.forEach(msg -> combinedHistory.put(new JSONObject().put("role", msg.getRole()).put("content", msg.getContent())));
-
-        GigaChatComplexResponse assistantResponse = gigaChatApiService.getCompletion(combinedHistory, effectiveUserInput);
-
-        ChatMessage userMessage = new ChatMessage();
-        userMessage.setRole("user");
-        userMessage.setContent(userInput);
-        userMessage.setBranch(currentProfile.getCurrentBranch());
-        userMessage.setProfileLogin(profileLogin);
-
-        ChatMessage assistantMessage = new ChatMessage();
-        assistantMessage.setRole("assistant");
-        assistantMessage.setContent(assistantResponse.getFullResponse()); // Use full response for history
-        assistantMessage.setBranch(currentProfile.getCurrentBranch());
-        assistantMessage.setProfileLogin(profileLogin);
-        assistantMessage.setPromptTokens(assistantResponse.getPromptTokens());
-        assistantMessage.setCompletionTokens(assistantResponse.getCompletionTokens());
-        assistantMessage.setTotalTokens(assistantResponse.getTotalTokens());
-
-        updateHistory(shortTermHistory, userMessage, assistantMessage, shortTermStrategy, chatHistoryRepository::saveShortTerm, (branch, pLogin) -> chatHistoryRepository.deleteShortTermByBranch(branch, pLogin), currentProfile.getCurrentBranch(), profileLogin);
-        updateHistory(midTermHistory, userMessage, assistantMessage, midTermStrategy, chatHistoryRepository::saveMidTerm, (branch, pLogin) -> chatHistoryRepository.deleteMidTermByBranch(branch, pLogin), currentProfile.getCurrentBranch(), profileLogin);
-        updateHistory(longTermHistory, userMessage, assistantMessage, longTermStrategy, chatHistoryRepository::saveLongTerm, (branch, pLogin) -> chatHistoryRepository.deleteLongTermByBranch(branch, pLogin), currentProfile.getCurrentBranch(), profileLogin);
-
-        long cumulativeTokens = chatHistoryRepository.getCumulativeTokens(currentProfile.getCurrentBranch(), profileLogin);
-
-        return new ChatResponse(
-                assistantResponse.getFullResponse(),
-                assistantResponse.getSummary(),
-                assistantResponse.getStickyFacts(),
-                assistantResponse.getPromptTokens(),
-                assistantResponse.getCompletionTokens(),
-                assistantResponse.getTotalTokens(),
-                cumulativeTokens
-        );
+        return combinedHistory;
     }
 
     private void updateHistory(List<ChatMessage> history, ChatMessage userMessage, ChatMessage assistantMessage, HistoryStrategy strategy, SaveMessageFunction saveFunction, DeleteBranchFunction deleteFunction, int branch, String profileLogin) {
@@ -110,9 +187,10 @@ public class ChatServiceImpl implements ChatService {
         appliedHistory.forEach(saveFunction::save);
     }
 
-    private String handleCommand(String command, Profile currentProfile, Model model) {
-        String[] parts = command.split(" ", 3); // Limit split to 3 parts for /profile command
+    private String handleCommand(String command, ChatState chatState) {
+        String[] parts = command.split(" ", 3);
         String cmd = parts[0];
+        Profile currentProfile = chatState.getCurrentProfile();
         String profileLogin = currentProfile.getLogin();
         int currentBranch = currentProfile.getCurrentBranch();
 
@@ -137,7 +215,7 @@ public class ChatServiceImpl implements ChatService {
                     targetProfile = new Profile(newProfileLogin, textToAppend);
                     profileRepository.save(targetProfile);
                 }
-                model.addAttribute("currentProfileLogin", newProfileLogin);
+                chatState.setCurrentProfile(targetProfile);
                 return "Switched to profile: " + newProfileLogin + (textToAppend.isEmpty() ? "" : " and appended text.");
 
             case "/clean":
@@ -145,7 +223,7 @@ public class ChatServiceImpl implements ChatService {
                 return "History for branch " + currentBranch + " of profile " + profileLogin + " cleared.";
             case "/cleanAll":
                 chatHistoryRepository.deleteAll(profileLogin);
-                currentProfile.setCurrentBranch(1); // Reset branch to 1 after cleaning all history
+                currentProfile.setCurrentBranch(1);
                 profileRepository.update(currentProfile);
                 return "All history for profile " + profileLogin + " cleared and branch reset to 1.";
             case "/branch":
@@ -153,8 +231,7 @@ public class ChatServiceImpl implements ChatService {
             case "/switch":
                 if (parts.length > 1) {
                     return switchBranch(Integer.parseInt(parts[1]), currentProfile);
-                }
-                else {
+                } else {
                     return switchBranch(currentProfile);
                 }
             case "/history":
@@ -200,7 +277,7 @@ public class ChatServiceImpl implements ChatService {
         profileRepository.update(currentProfile);
         return "Switched to branch " + branch + " for profile " + currentProfile.getLogin() + ".";
     }
-
+    
     private String switchBranch(Profile currentProfile) {
         String profileLogin = currentProfile.getLogin();
         List<Integer> branches = chatHistoryRepository.getBranches(profileLogin);
@@ -244,7 +321,7 @@ public class ChatServiceImpl implements ChatService {
             return "Usage: /strategy [short|middle|long] [unlimited|sliding|sticky|summary] [size]";
         }
 
-        String memoryType = "short"; // Default memory type
+        String memoryType = "short";
         int strategyIndex = 1;
 
         if (parts[1].equals("short") || parts[1].equals("middle") || parts[1].equals("long")) {
