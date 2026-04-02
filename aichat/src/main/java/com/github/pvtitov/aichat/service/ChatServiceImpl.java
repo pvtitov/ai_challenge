@@ -80,6 +80,9 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setContent(assistantResponse.getFullResponse()); // Use full response for history
         assistantMessage.setBranch(currentProfile.getCurrentBranch());
         assistantMessage.setProfileLogin(profileLogin);
+        assistantMessage.setPromptTokens(assistantResponse.getPromptTokens());
+        assistantMessage.setCompletionTokens(assistantResponse.getCompletionTokens());
+        assistantMessage.setTotalTokens(assistantResponse.getTotalTokens());
 
         updateHistory(shortTermHistory, userMessage, assistantMessage, shortTermStrategy, chatHistoryRepository::saveShortTerm, (branch, pLogin) -> chatHistoryRepository.deleteShortTermByBranch(branch, pLogin), currentProfile.getCurrentBranch(), profileLogin);
         updateHistory(midTermHistory, userMessage, assistantMessage, midTermStrategy, chatHistoryRepository::saveMidTerm, (branch, pLogin) -> chatHistoryRepository.deleteMidTermByBranch(branch, pLogin), currentProfile.getCurrentBranch(), profileLogin);
@@ -91,7 +94,10 @@ public class ChatServiceImpl implements ChatService {
                 assistantResponse.getFullResponse(),
                 assistantResponse.getSummary(),
                 assistantResponse.getStickyFacts(),
-                0, 0, 0, cumulativeTokens
+                assistantResponse.getPromptTokens(),
+                assistantResponse.getCompletionTokens(),
+                assistantResponse.getTotalTokens(),
+                cumulativeTokens
         );
     }
 
@@ -139,7 +145,9 @@ public class ChatServiceImpl implements ChatService {
                 return "History for branch " + currentBranch + " of profile " + profileLogin + " cleared.";
             case "/cleanAll":
                 chatHistoryRepository.deleteAll(profileLogin);
-                return "All history for profile " + profileLogin + " cleared.";
+                currentProfile.setCurrentBranch(1); // Reset branch to 1 after cleaning all history
+                profileRepository.update(currentProfile);
+                return "All history for profile " + profileLogin + " cleared and branch reset to 1.";
             case "/branch":
                 return createBranch(currentProfile);
             case "/switch":

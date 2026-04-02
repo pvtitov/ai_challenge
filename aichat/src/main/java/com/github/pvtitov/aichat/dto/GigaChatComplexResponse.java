@@ -13,14 +13,23 @@ public class GigaChatComplexResponse {
     private String summary;
     @JsonProperty("sticky_facts")
     private String stickyFacts;
+    @JsonProperty("prompt_tokens")
+    private Integer promptTokens;
+    @JsonProperty("completion_tokens")
+    private Integer completionTokens;
+    @JsonProperty("total_tokens")
+    private Integer totalTokens;
 
     public GigaChatComplexResponse() {
     }
 
-    public GigaChatComplexResponse(String fullResponse, String summary, String stickyFacts) {
+    public GigaChatComplexResponse(String fullResponse, String summary, String stickyFacts, Integer promptTokens, Integer completionTokens, Integer totalTokens) {
         this.fullResponse = fullResponse;
         this.summary = summary;
         this.stickyFacts = stickyFacts;
+        this.promptTokens = promptTokens;
+        this.completionTokens = completionTokens;
+        this.totalTokens = totalTokens;
     }
 
     public String getFullResponse() {
@@ -47,6 +56,30 @@ public class GigaChatComplexResponse {
         this.stickyFacts = stickyFacts;
     }
 
+    public Integer getPromptTokens() {
+        return promptTokens;
+    }
+
+    public void setPromptTokens(Integer promptTokens) {
+        this.promptTokens = promptTokens;
+    }
+
+    public Integer getCompletionTokens() {
+        return completionTokens;
+    }
+
+    public void setCompletionTokens(Integer completionTokens) {
+        this.completionTokens = completionTokens;
+    }
+
+    public Integer getTotalTokens() {
+        return totalTokens;
+    }
+
+    public void setTotalTokens(Integer totalTokens) {
+        this.totalTokens = totalTokens;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -54,12 +87,15 @@ public class GigaChatComplexResponse {
         GigaChatComplexResponse that = (GigaChatComplexResponse) o;
         return Objects.equals(fullResponse, that.fullResponse) &&
                 Objects.equals(summary, that.summary) &&
-                Objects.equals(stickyFacts, that.stickyFacts);
+                Objects.equals(stickyFacts, that.stickyFacts) &&
+                Objects.equals(promptTokens, that.promptTokens) &&
+                Objects.equals(completionTokens, that.completionTokens) &&
+                Objects.equals(totalTokens, that.totalTokens);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(fullResponse, summary, stickyFacts);
+        return Objects.hash(fullResponse, summary, stickyFacts, promptTokens, completionTokens, totalTokens);
     }
 
     @Override
@@ -70,7 +106,10 @@ public class GigaChatComplexResponse {
             return "{" +
                     "\"full_response\":\"" + fullResponse + "\"," +
                     "\"summary\":\"" + summary + "\"," +
-                    "\"sticky_facts\":\"" + stickyFacts + "\"" +
+                    "\"sticky_facts\":\"" + stickyFacts + "\"," +
+                    "\"prompt_tokens\":" + promptTokens + "," +
+                    "\"completion_tokens\":" + completionTokens + "," +
+                    "\"total_tokens\":" + totalTokens +
                     "}";
         }
     }

@@ -92,8 +92,19 @@ public class ChatHistoryRepositoryImpl implements ChatHistoryRepository {
 
     @Override
     public long getCumulativeTokens(int branch, String profileLogin) {
-        String sql = "SELECT SUM(total_tokens) FROM " + DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE + " WHERE branch = ? AND profile_login = ?";
-        Long cumulativeTokens = jdbcTemplate.queryForObject(sql, Long.class, branch, profileLogin);
+        String sql = "SELECT SUM(total_tokens) FROM (" +
+                "SELECT DISTINCT id, total_tokens FROM " + DatabaseConstants.CHAT_HISTORY_SHORT_TERM_TABLE + " WHERE branch = ? AND profile_login = ? " +
+                "UNION " +
+                "SELECT DISTINCT id, total_tokens FROM " + DatabaseConstants.CHAT_HISTORY_MID_TERM_TABLE + " WHERE branch = ? AND profile_login = ? " +
+                "UNION " +
+                "SELECT DISTINCT id, total_tokens FROM " + DatabaseConstants.CHAT_HISTORY_LONG_TERM_TABLE + " WHERE branch = ? AND profile_login = ?" +
+                ") AS combined_history";
+
+        Long cumulativeTokens = jdbcTemplate.queryForObject(sql, Long.class,
+                branch, profileLogin,
+                branch, profileLogin,
+                branch, profileLogin);
+
         return cumulativeTokens == null ? 0 : cumulativeTokens;
     }
 

@@ -74,11 +74,25 @@ public class GigaChatApiService {
             JSONObject jsonResponse = new JSONObject(responseBody);
             String content = jsonResponse.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
 
+            Integer promptTokens = null;
+            Integer completionTokens = null;
+            Integer totalTokens = null;
+
+            if (jsonResponse.has("usage")) {
+                JSONObject usage = jsonResponse.getJSONObject("usage");
+                promptTokens = usage.optInt("prompt_tokens", 0);
+                completionTokens = usage.optInt("completion_tokens", 0);
+                totalTokens = usage.optInt("total_tokens", 0);
+            }
+
             // Clean the content to be valid JSON
             content = extractJson(content);
 
             try {
                 GigaChatComplexResponse complexResponse = objectMapper.readValue(content, GigaChatComplexResponse.class);
+                complexResponse.setPromptTokens(promptTokens);
+                complexResponse.setCompletionTokens(completionTokens);
+                complexResponse.setTotalTokens(totalTokens);
                 return complexResponse;
             } catch (Exception e) {
                 // If parsing fails, return the raw content in the full_response and empty strings for others
@@ -86,6 +100,9 @@ public class GigaChatApiService {
                 complexResponse.setFullResponse(content);
                 complexResponse.setSummary("");
                 complexResponse.setStickyFacts("");
+                complexResponse.setPromptTokens(promptTokens);
+                complexResponse.setCompletionTokens(completionTokens);
+                complexResponse.setTotalTokens(totalTokens);
                 return complexResponse;
             }
         }
