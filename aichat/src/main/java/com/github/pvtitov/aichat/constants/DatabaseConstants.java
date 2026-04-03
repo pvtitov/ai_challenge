@@ -11,6 +11,12 @@ public final class DatabaseConstants {
     public static final String CHAT_HISTORY_MID_TERM_TABLE = "chat_history_mid_term";
     public static final String CHAT_HISTORY_LONG_TERM_TABLE = "chat_history_long_term";
 
+    public static final String INVARIANTS_TABLE = "invariants";
+    public static final String INVARIANTS_ID = "id";
+    public static final String INVARIANTS_TEXT = "text";
+    public static final String INVARIANTS_BRANCH = "branch";
+    public static final String INVARIANTS_PROFILE_LOGIN = "profile_login";
+
     public static final String CREATE_PROFILE_TABLE = "CREATE TABLE IF NOT EXISTS " + PROFILE_TABLE + " (" +
             "login TEXT PRIMARY KEY," +
             "profile_data TEXT NOT NULL," +

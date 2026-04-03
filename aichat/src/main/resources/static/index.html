@@ -60,15 +60,26 @@
         noButton.addEventListener('click', () => handleConfirmation('n'));
 
         async function handleConfirmation(choice) {
-            addMessageToLog('You', choice, null, 'user-message');
             toggleControls(false); // Disable controls while processing confirmation
             await sendMessage(choice);
         }
 
         async function sendMessage(prompt) {
-            addMessageToLog('You', prompt, null, 'user-message');
             promptInput.value = '';
             toggleControls(true); // Disable controls during request
+
+            if (prompt.startsWith('/invariant')) {
+                const invariantText = prompt.substring('/invariant'.length).trim();
+                if (invariantText) {
+                    addMessageToLog('Info', `Invariant added: "${invariantText}"`, null, 'info-message');
+                } else {
+                    addMessageToLog('Info', 'Invariant command ignored: no text provided.', null, 'info-message');
+                    toggleControls(false); // Re-enable controls
+                    return;
+                }
+            } else {
+                addMessageToLog('You', prompt, null, 'user-message');
+            }
 
             try {
                 const response = await fetch('/chat', {

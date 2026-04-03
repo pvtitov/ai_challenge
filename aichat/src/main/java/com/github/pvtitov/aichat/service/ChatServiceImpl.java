@@ -6,8 +6,11 @@ import com.github.pvtitov.aichat.dto.state.ChatState;
 import com.github.pvtitov.aichat.dto.state.ConversationState;
 import com.github.pvtitov.aichat.dto.state.Stage;
 import com.github.pvtitov.aichat.model.ChatMessage;
+import com.github.pvtitov.aichat.model.ChatMessage;
+import com.github.pvtitov.aichat.model.Invariant; // Added
 import com.github.pvtitov.aichat.model.Profile;
 import com.github.pvtitov.aichat.repository.ChatHistoryRepository;
+import com.github.pvtitov.aichat.repository.InvariantRepository; // Added
 import com.github.pvtitov.aichat.repository.ProfileRepository;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -23,6 +26,7 @@ public class ChatServiceImpl implements ChatService {
 
     private final ChatHistoryRepository chatHistoryRepository;
     private final ProfileRepository profileRepository;
+    private final InvariantRepository invariantRepository; // New dependency
     private final GigaChatApiService gigaChatApiService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -32,9 +36,11 @@ public class ChatServiceImpl implements ChatService {
 
     public ChatServiceImpl(ChatHistoryRepository chatHistoryRepository,
                            ProfileRepository profileRepository,
+                           InvariantRepository invariantRepository, // New dependency
                            GigaChatApiService gigaChatApiService) {
         this.chatHistoryRepository = chatHistoryRepository;
         this.profileRepository = profileRepository;
+        this.invariantRepository = invariantRepository; // Initialize new dependency
         this.gigaChatApiService = gigaChatApiService;
         this.shortTermStrategy = new SlidingWindowHistoryStrategy(2);
         this.midTermStrategy = new SlidingWindowHistoryStrategy(10);
@@ -78,7 +84,8 @@ public class ChatServiceImpl implements ChatService {
     private ChatResponse handleAwaitingPrompt(String userInput, ConversationState conversationState, Profile currentProfile) throws IOException {
         conversationState.setOriginalPrompt(userInput);
 
-        String planPrompt = "You are a planning AI. Based on the user's request, create a step-by-step plan. The user's request is: \"" + userInput + "\". Respond with the plan only.";
+        String invariantPrefix = getInvariantsAsPromptPrefix(currentProfile);
+        String planPrompt = invariantPrefix + "You are a planning AI. Based on the user's request, create a step-by-step plan. The user's request is: \"" + userInput + "\". Respond with the plan only.";
         GigaChatComplexResponse planResponse = gigaChatApiService.getCompletion(new JSONArray(), planPrompt);
         String plan = planResponse.getFullResponse();
         conversationState.setLastPlan(plan);
@@ -97,7 +104,8 @@ public class ChatServiceImpl implements ChatService {
         }
 
         String plan = conversationState.getLastPlan();
-        String actionPrompt = "You are an executing AI. Carry out the following plan: \"" + plan + "\". The original user request was: \"" + conversationState.getOriginalPrompt() + "\".";
+        String invariantPrefix = getInvariantsAsPromptPrefix(currentProfile); // Get invariants
+        String actionPrompt = invariantPrefix + "You are an executing AI. Carry out the following plan: \"" + plan + "\". The original user request was: \"" + conversationState.getOriginalPrompt() + "\".";
         
         // Include history in the action prompt
         JSONArray history = getHistoryAsJson(currentProfile);
@@ -118,29 +126,53 @@ public class ChatServiceImpl implements ChatService {
             return new ChatResponse("Action aborted. Please provide a new prompt.");
         }
 
-        String verificationPrompt = "You are a verification AI. Please review the original request, the plan, and the action's result. Verify if the task is complete and correct. Original request: \"" + conversationState.getOriginalPrompt() + "\". Plan: \"" + conversationState.getLastPlan() + "\".";
+        String invariantPrefix = getInvariantsAsPromptPrefix(currentProfile); // Get invariants
+        String verificationPrompt = invariantPrefix + "You are a verification AI. Please review the original request, the plan, and the action's result. Verify if the task is complete and correct. Original request: \"" + conversationState.getOriginalPrompt() + "\". Plan: \"" + conversationState.getLastPlan() + "\".";
         
         // Include history in the verification prompt
         JSONArray history = getHistoryAsJson(currentProfile);
         GigaChatComplexResponse verificationResponse = gigaChatApiService.getCompletion(history, verificationPrompt);
 
-        // Save messages to history
-        saveConversationToHistory(conversationState.getOriginalPrompt(), verificationResponse.getFullResponse(), currentProfile);
-        
-        long cumulativeTokens = chatHistoryRepository.getCumulativeTokens(currentProfile.getCurrentBranch(), currentProfile.getLogin());
-        
-        // Reset for the next interaction
-        conversationState.reset();
+        String verificationResult = verificationResponse.getFullResponse();
 
-        return new ChatResponse(
-            verificationResponse.getFullResponse(),
-            verificationResponse.getSummary(),
-            verificationResponse.getStickyFacts(),
-            verificationResponse.getPromptTokens(),
-            verificationResponse.getCompletionTokens(),
-            verificationResponse.getTotalTokens(),
-            cumulativeTokens
-        );
+        // Check if verification failed (assuming LLM indicates failure explicitly)
+        if (verificationResult.startsWith("VERIFICATION_FAILED")) {
+            // Do not save to history yet, as action needs to be re-run
+            // Keep the stage as AWAITING_ACTION_APPROVAL to allow re-running the action
+            // conversationState.setStage(Stage.AWAITING_ACTION_APPROVAL); // Already in this stage
+
+            ChatResponse response = new ChatResponse(
+                "Verification failed: " + verificationResult + "\nDo you want to re-run the action stage? (y/n)",
+                verificationResponse.getSummary(),
+                verificationResponse.getStickyFacts(),
+                verificationResponse.getPromptTokens(),
+                verificationResponse.getCompletionTokens(),
+                verificationResponse.getTotalTokens(),
+                chatHistoryRepository.getCumulativeTokens(currentProfile.getCurrentBranch(), currentProfile.getLogin()) // Get cumulative tokens even if not saving
+            );
+            response.setResponseType(ResponseType.INFO); // Indicate it's an info message
+            response.setRequiresConfirmation(true); // Ask for confirmation to re-run
+            return response;
+        } else {
+            // Verification successful
+            // Save messages to history
+            saveConversationToHistory(conversationState.getOriginalPrompt(), verificationResult, currentProfile);
+            
+            long cumulativeTokens = chatHistoryRepository.getCumulativeTokens(currentProfile.getCurrentBranch(), currentProfile.getLogin());
+            
+            // Reset for the next interaction
+            conversationState.reset();
+
+            return new ChatResponse(
+                verificationResult,
+                verificationResponse.getSummary(),
+                verificationResponse.getStickyFacts(),
+                verificationResponse.getPromptTokens(),
+                verificationResponse.getCompletionTokens(),
+                verificationResponse.getTotalTokens(),
+                cumulativeTokens
+            );
+        }
     }
 
     private void saveConversationToHistory(String userInput, String assistantResponse, Profile profile) {
@@ -195,6 +227,20 @@ public class ChatServiceImpl implements ChatService {
         int currentBranch = currentProfile.getCurrentBranch();
 
         switch (cmd) {
+            case "/invariant":
+                // Find the index of the first space after "/invariant"
+                int invariantStartIndex = command.indexOf(" ");
+                if (invariantStartIndex == -1 || invariantStartIndex + 1 >= command.length()) {
+                    return "Usage: /invariant [TEXT of invariant]";
+                }
+                // Extract the text after "/invariant "
+                String invariantText = command.substring(invariantStartIndex + 1).trim();
+                if (invariantText.isEmpty()) {
+                    return "Usage: /invariant [TEXT of invariant]";
+                }
+                Invariant invariant = new Invariant(invariantText, currentBranch, profileLogin);
+                invariantRepository.save(invariant);
+                return "Invariant added: \"" + invariantText + "\"";
             case "/profile":
                 if (parts.length < 2) {
                     return "Usage: /profile [LOGIN] [optional text to append to profile data]";
@@ -220,12 +266,14 @@ public class ChatServiceImpl implements ChatService {
 
             case "/clean":
                 chatHistoryRepository.deleteByBranch(currentBranch, profileLogin);
-                return "History for branch " + currentBranch + " of profile " + profileLogin + " cleared.";
+                invariantRepository.deleteByBranch(currentBranch, profileLogin);
+                return "History and invariants for branch " + currentBranch + " of profile " + profileLogin + " cleared.";
             case "/cleanAll":
                 chatHistoryRepository.deleteAll(profileLogin);
+                invariantRepository.deleteAll(profileLogin);
                 currentProfile.setCurrentBranch(1);
                 profileRepository.update(currentProfile);
-                return "All history for profile " + profileLogin + " cleared and branch reset to 1.";
+                return "All history and invariants for profile " + profileLogin + " cleared and branch reset to 1.";
             case "/branch":
                 return createBranch(currentProfile);
             case "/switch":
@@ -296,12 +344,21 @@ public class ChatServiceImpl implements ChatService {
         return "Switched to branch " + newBranch + " for profile " + profileLogin + ".";
     }
 
-    private String getHistoryAsString(Profile currentProfile) {
+    @Override
+    public String getHistoryAsString(Profile currentProfile) {
         StringBuilder sb = new StringBuilder();
         String profileLogin = currentProfile.getLogin();
         int currentBranch = currentProfile.getCurrentBranch();
 
-        sb.append("Short Term History (Profile: ").append(profileLogin).append(", Branch: ").append(currentBranch).append("):\n");
+        sb.append("Invariants (Profile: ").append(profileLogin).append(", Branch: ").append(currentBranch).append("):\n");
+        List<Invariant> invariants = invariantRepository.findByBranch(currentBranch, profileLogin);
+        if (invariants.isEmpty()) {
+            sb.append("None\n");
+        } else {
+            invariants.forEach(item -> sb.append("- ").append(item.getText()).append("\n"));
+        }
+
+        sb.append("\nShort Term History (Profile: ").append(profileLogin).append(", Branch: ").append(currentBranch).append("):\n");
         List<ChatMessage> shortTermHistory = chatHistoryRepository.findShortTermByBranch(currentBranch, profileLogin);
         shortTermHistory.forEach(item -> sb.append(item.getRole()).append(": ").append(item.getContent()).append("\n"));
 
@@ -378,6 +435,18 @@ public class ChatServiceImpl implements ChatService {
                 memoryType.substring(0, 1).toUpperCase() + memoryType.substring(1),
                 strategyType,
                 (size > 0 ? " with size " + size : ""));
+    }
+
+    private String getInvariantsAsPromptPrefix(Profile currentProfile) {
+        List<Invariant> invariants = invariantRepository.findByBranch(currentProfile.getCurrentBranch(), currentProfile.getLogin());
+        if (invariants.isEmpty()) {
+            return "";
+        }
+        StringBuilder prefix = new StringBuilder("The following are invariants that must always be true:\n");
+        for (int i = 0; i < invariants.size(); i++) {
+            prefix.append(i + 1).append(". ").append(invariants.get(i).getText()).append("\n");
+        }
+        return prefix.toString();
     }
 
     @FunctionalInterface

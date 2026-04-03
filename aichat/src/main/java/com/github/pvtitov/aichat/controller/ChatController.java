@@ -41,4 +41,10 @@ public class ChatController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+    @GetMapping("/history")
+    public ResponseEntity<String> history(@ModelAttribute("chatState") ChatState chatState) {
+        String history = chatService.getHistoryAsString(chatState.getCurrentProfile());
+        return ResponseEntity.ok(history);
+    }
 }
