@@ -28,6 +28,7 @@ public class ChatServiceImpl implements ChatService {
     private final ProfileRepository profileRepository;
     private final InvariantRepository invariantRepository; // New dependency
     private final GigaChatApiService gigaChatApiService;
+    private final McpService mcpService; // New dependency
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private HistoryStrategy shortTermStrategy;
@@ -36,12 +37,14 @@ public class ChatServiceImpl implements ChatService {
 
     public ChatServiceImpl(ChatHistoryRepository chatHistoryRepository,
                            ProfileRepository profileRepository,
-                           InvariantRepository invariantRepository, // New dependency
-                           GigaChatApiService gigaChatApiService) {
+                           InvariantRepository invariantRepository,
+                           GigaChatApiService gigaChatApiService,
+                           McpService mcpService) { // New dependency
         this.chatHistoryRepository = chatHistoryRepository;
         this.profileRepository = profileRepository;
-        this.invariantRepository = invariantRepository; // Initialize new dependency
+        this.invariantRepository = invariantRepository;
         this.gigaChatApiService = gigaChatApiService;
+        this.mcpService = mcpService; // Initialize new dependency
         this.shortTermStrategy = new SlidingWindowHistoryStrategy(2);
         this.midTermStrategy = new SlidingWindowHistoryStrategy(10);
         this.longTermStrategy = new UnlimitedHistoryStrategy();
@@ -286,6 +289,13 @@ public class ChatServiceImpl implements ChatService {
                 return getHistoryAsString(currentProfile);
             case "/strategy":
                 return setHistoryStrategy(parts);
+            case "/mcp_list":
+                return listMcpServersFormatted();
+            case "/mcp_status":
+                return mcpService.getConnectionStatus();
+            case "/mcp_connect":
+                boolean success = mcpService.initializeConnection();
+                return success ? "MCP connection established successfully." : "Failed to establish MCP connection. Check logs for details.";
             default:
                 return "Unknown command: " + cmd;
         }
@@ -447,6 +457,24 @@ public class ChatServiceImpl implements ChatService {
             prefix.append(i + 1).append(". ").append(invariants.get(i).getText()).append("\n");
         }
         return prefix.toString();
+    }
+
+    @Override
+    public List<String> listMcpServers() {
+        return mcpService.listMcpServers();
+    }
+
+    private String listMcpServersFormatted() {
+        List<String> servers = mcpService.listMcpServers();
+        if (servers.isEmpty()) {
+            return "No MCP servers found.";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("Available MCP Servers and Resources:\n");
+        for (String server : servers) {
+            sb.append("  ").append(server).append("\n");
+        }
+        return sb.toString();
     }
 
     @FunctionalInterface
