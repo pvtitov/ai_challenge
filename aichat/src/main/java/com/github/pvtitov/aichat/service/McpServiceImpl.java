@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -172,5 +173,64 @@ public class McpServiceImpl implements McpService {
                    "Server URL: " + mcpServerUrl + "\n" +
                    "Use /mcp_connect to establish connection";
         }
+    }
+
+    /**
+     * Call an MCP tool with the given arguments
+     * @param toolName the name of the tool to call
+     * @param arguments the arguments to pass to the tool
+     * @return the tool result as a string, or error message
+     */
+    @Override
+    public String callTool(String toolName, Map<String, Object> arguments) {
+        connectionLock.lock();
+        try {
+            if (!isConnected()) {
+                boolean initSuccess = initializeConnection();
+                if (!initSuccess) {
+                    return "Error: Cannot call tool - MCP server is not connected";
+                }
+            }
+
+            try {
+                McpSchema.CallToolResult result = mcpClient.callTool(
+                    new McpSchema.CallToolRequest(toolName, arguments)
+                );
+
+                if (result == null) {
+                    return "Error: Tool '" + toolName + "' returned null result";
+                }
+
+                if (result.isError()) {
+                    return "Error calling tool '" + toolName + "': " + extractContent(result);
+                }
+
+                return extractContent(result);
+            } catch (Exception e) {
+                log.error("Failed to call tool '{}': {}", toolName, e.getMessage(), e);
+                return "Error calling tool '" + toolName + "': " + e.getMessage();
+            }
+        } finally {
+            connectionLock.unlock();
+        }
+    }
+
+    /**
+     * Extract text content from tool result
+     */
+    private String extractContent(McpSchema.CallToolResult result) {
+        if (result.content() == null || result.content().isEmpty()) {
+            return "Tool returned empty content";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (McpSchema.Content content : result.content()) {
+            if (content instanceof McpSchema.TextContent textContent) {
+                sb.append(textContent.text());
+            } else {
+                sb.append(content.toString());
+            }
+        }
+        return sb.toString();
     }
 }

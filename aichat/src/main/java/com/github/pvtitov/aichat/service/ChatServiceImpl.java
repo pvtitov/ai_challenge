@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -87,8 +88,25 @@ public class ChatServiceImpl implements ChatService {
     private ChatResponse handleAwaitingPrompt(String userInput, ConversationState conversationState, Profile currentProfile) throws IOException {
         conversationState.setOriginalPrompt(userInput);
 
+        // Check if we should call an MCP tool based on user input
+        String toolResult = tryCallMcpTool(userInput);
+        
         String invariantPrefix = getInvariantsAsPromptPrefix(currentProfile);
-        String planPrompt = invariantPrefix + "You are a planning AI. Based on the user's request, create a step-by-step plan. The user's request is: \"" + userInput + "\". Respond with the plan only.";
+        
+        // If we have tool result, add it to the context
+        String planPrompt;
+        if (toolResult != null && !toolResult.startsWith("Error:") && !toolResult.startsWith("No tool")) {
+            // User asked for something we can fulfill via MCP tools
+            planPrompt = invariantPrefix + 
+                "You are a planning AI. Based on the user's request, create a step-by-step plan. " +
+                "The following data has been retrieved from an external source and should be used in your response:\n" +
+                toolResult + "\n\n" +
+                "User's request: \"" + userInput + "\". Respond with the plan only.";
+        } else {
+            String planPromptBase = invariantPrefix + "You are a planning AI. Based on the user's request, create a step-by-step plan. The user's request is: \"" + userInput + "\". Respond with the plan only.";
+            planPrompt = planPromptBase;
+        }
+        
         GigaChatComplexResponse planResponse = gigaChatApiService.getCompletion(new JSONArray(), planPrompt);
         String plan = planResponse.getFullResponse();
         conversationState.setLastPlan(plan);
@@ -98,6 +116,68 @@ public class ChatServiceImpl implements ChatService {
         response.setResponseType(ResponseType.PLAN);
         response.setRequiresConfirmation(true);
         return response;
+    }
+
+    /**
+     * Try to call an MCP tool if the user input matches a known tool pattern
+     * @return tool result or null if no tool should be called
+     */
+    private String tryCallMcpTool(String userInput) {
+        if (!mcpService.isConnected()) {
+            return null;
+        }
+
+        String input = userInput.toLowerCase();
+        
+        // Weather tool detection
+        if (input.contains("weather") || input.contains("погода") || input.contains("temperature") || 
+            input.contains("температура") || (input.contains("how") && input.contains("hot") && input.contains("outside")) ||
+            (input.contains("what") && input.contains("weather"))) {
+            
+            // Extract city name - simple heuristic: look for "in <city>" pattern
+            String city = extractCityFromInput(userInput);
+            if (city != null) {
+                return mcpService.callTool("get_weather", Map.of("city", city));
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Extract city name from user input using simple heuristics
+     */
+    private String extractCityFromInput(String input) {
+        // Look for patterns like "in Moscow", "for London", "weather in Tokyo"
+        String[] patterns = {"in ", "for ", "at "};
+        for (String pattern : patterns) {
+            int index = input.toLowerCase().indexOf(pattern);
+            if (index != -1) {
+                String afterPattern = input.substring(index + pattern.length()).trim();
+                // Remove trailing punctuation and question marks
+                afterPattern = afterPattern.replaceAll("[?!.]+$", "").trim();
+                // Take first 1-3 words as city name
+                String[] words = afterPattern.split("\\s+");
+                int cityWords = Math.min(words.length, 3);
+                if (cityWords > 0) {
+                    StringBuilder city = new StringBuilder();
+                    for (int i = 0; i < cityWords; i++) {
+                        if (i > 0) city.append(" ");
+                        city.append(words[i]);
+                    }
+                    return city.toString().trim();
+                }
+            }
+        }
+        
+        // If no pattern found, try to use the whole input after removing weather-related words
+        String cleaned = input.replaceAll("(?i)(what('s| is)|how('s| is)|the|weather|like|outside|today|current|tell|me|about|for|in)", "").trim();
+        cleaned = cleaned.replaceAll("[?!.]+$", "").trim();
+        if (!cleaned.isEmpty() && cleaned.length() > 1) {
+            return cleaned.substring(0, 1).toUpperCase() + cleaned.substring(1);
+        }
+        
+        return null;
     }
 
     private ChatResponse handlePlanApproval(String confirmation, ConversationState conversationState, Profile currentProfile) throws IOException {
