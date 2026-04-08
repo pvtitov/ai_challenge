@@ -123,24 +123,29 @@ public class ChatServiceImpl implements ChatService {
      * @return tool result or null if no tool should be called
      */
     private String tryCallMcpTool(String userInput) {
+        // Auto-connect if not already connected
         if (!mcpService.isConnected()) {
-            return null;
+            boolean connected = mcpService.initializeConnection();
+            if (!connected) {
+                return null; // Connection failed, fall back to LLM-only mode
+            }
         }
 
         String input = userInput.toLowerCase();
-        
+
         // Weather tool detection
-        if (input.contains("weather") || input.contains("погода") || input.contains("temperature") || 
+        if (input.contains("weather") || input.contains("погода") || input.contains("temperature") ||
             input.contains("температура") || (input.contains("how") && input.contains("hot") && input.contains("outside")) ||
             (input.contains("what") && input.contains("weather"))) {
-            
+
             // Extract city name - simple heuristic: look for "in <city>" pattern
             String city = extractCityFromInput(userInput);
             if (city != null) {
+                System.out.println("call tool get_weather for city " + city);
                 return mcpService.callTool("get_weather", Map.of("city", city));
             }
         }
-        
+
         return null;
     }
 

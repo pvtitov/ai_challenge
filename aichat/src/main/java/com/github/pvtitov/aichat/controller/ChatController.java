@@ -4,6 +4,8 @@ import com.github.pvtitov.aichat.dto.ChatRequest;
 import com.github.pvtitov.aichat.dto.ChatResponse;
 import com.github.pvtitov.aichat.dto.state.ChatState;
 import com.github.pvtitov.aichat.service.ChatService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
@@ -13,6 +15,8 @@ import java.io.IOException;
 @Controller
 @SessionAttributes("chatState")
 public class ChatController {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatController.class);
 
     private final ChatService chatService;
 
@@ -37,8 +41,9 @@ public class ChatController {
             ChatResponse response = chatService.process(request, chatState);
             return ResponseEntity.ok(response);
         } catch (IOException e) {
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().build();
+            log.error("Chat processing failed for prompt: {}", request.getPrompt(), e);
+            return ResponseEntity.internalServerError()
+                .body(new ChatResponse("Error: " + e.getMessage()));
         }
     }
 
