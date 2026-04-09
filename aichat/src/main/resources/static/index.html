@@ -25,6 +25,12 @@
         #confirmation-area button { padding: 0.5rem 1.5rem; margin: 0 0.5rem; border: 1px solid #ccc; border-radius: 8px; cursor: pointer; }
         #yes-button { background-color: #28a745; color: white; }
         #no-button { background-color: #dc3545; color: white; }
+        #weather-logs { margin-top: 1rem; border: 1px solid #ddd; padding: 0.75rem; background-color: #e8f4fd; border-radius: 8px; display: none; }
+        #weather-logs h3 { margin: 0 0 0.5rem 0; color: #333; font-size: 0.9rem; }
+        .weather-log-item { font-size: 0.85rem; padding: 0.5rem; margin-bottom: 0.5rem; background-color: #fff; border-radius: 4px; border-left: 3px solid #007bff; }
+        .weather-log-time { font-size: 0.75rem; color: #888; margin-bottom: 0.25rem; }
+        .weather-log-city { font-weight: bold; color: #007bff; }
+        .weather-log-data { white-space: pre-wrap; }
     </style>
 </head>
 <body>
@@ -39,6 +45,10 @@
         <button id="yes-button">Yes</button>
         <button id="no-button">No</button>
     </div>
+    <div id="weather-logs">
+        <h3>Recent Weather Logs</h3>
+        <div id="weather-log-list"></div>
+    </div>
 
     <script>
         const chatLog = document.getElementById('chat-log');
@@ -48,6 +58,8 @@
         const confirmationArea = document.getElementById('confirmation-area');
         const yesButton = document.getElementById('yes-button');
         const noButton = document.getElementById('no-button');
+        const weatherLogsDiv = document.getElementById('weather-logs');
+        const weatherLogList = document.getElementById('weather-log-list');
 
         chatForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -104,6 +116,9 @@
                 } else {
                     toggleControls(false); // Re-enable input, hide confirmation
                 }
+
+                // Refresh weather logs after receiving a response
+                fetchWeatherLogs();
 
             } catch (error) {
                 addMessageToLog('Error', `An error occurred: ${error.message}`);
@@ -162,6 +177,43 @@
             chatLog.appendChild(messageDiv);
             chatLog.scrollTop = chatLog.scrollHeight;
         }
+
+        async function fetchWeatherLogs() {
+            try {
+                const response = await fetch('/weather-logs?limit=3');
+                if (!response.ok) return;
+                const logs = await response.json();
+                if (logs && logs.length > 0) {
+                    weatherLogList.innerHTML = '';
+                    logs.forEach(log => {
+                        const item = document.createElement('div');
+                        item.classList.add('weather-log-item');
+                        const timeDiv = document.createElement('div');
+                        timeDiv.classList.add('weather-log-time');
+                        const requestTime = log.requestTime ? log.requestTime.replace('T', ' ').substring(0, 19) : '';
+                        timeDiv.textContent = requestTime + ' - ';
+                        const citySpan = document.createElement('span');
+                        citySpan.classList.add('weather-log-city');
+                        citySpan.textContent = log.city;
+                        timeDiv.appendChild(citySpan);
+                        item.appendChild(timeDiv);
+                        const dataDiv = document.createElement('div');
+                        dataDiv.classList.add('weather-log-data');
+                        dataDiv.textContent = log.weatherData;
+                        item.appendChild(dataDiv);
+                        weatherLogList.appendChild(item);
+                    });
+                    weatherLogsDiv.style.display = 'block';
+                } else {
+                    weatherLogsDiv.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Failed to fetch weather logs:', error);
+            }
+        }
+
+        // Refresh weather logs every 10 seconds when visible
+        setInterval(fetchWeatherLogs, 10000);
     </script>
 </body>
 </html>

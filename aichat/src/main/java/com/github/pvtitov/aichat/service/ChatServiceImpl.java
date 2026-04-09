@@ -9,14 +9,18 @@ import com.github.pvtitov.aichat.model.ChatMessage;
 import com.github.pvtitov.aichat.model.ChatMessage;
 import com.github.pvtitov.aichat.model.Invariant; // Added
 import com.github.pvtitov.aichat.model.Profile;
+import com.github.pvtitov.aichat.model.WeatherLog;
 import com.github.pvtitov.aichat.repository.ChatHistoryRepository;
 import com.github.pvtitov.aichat.repository.InvariantRepository; // Added
 import com.github.pvtitov.aichat.repository.ProfileRepository;
+import com.github.pvtitov.aichat.repository.WeatherLogRepository;
+import com.github.pvtitov.aichat.service.WeatherSchedulerService.WeatherSchedulerConfig;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +32,10 @@ public class ChatServiceImpl implements ChatService {
     private final ChatHistoryRepository chatHistoryRepository;
     private final ProfileRepository profileRepository;
     private final InvariantRepository invariantRepository; // New dependency
+    private final WeatherLogRepository weatherLogRepository;
     private final GigaChatApiService gigaChatApiService;
     private final McpService mcpService; // New dependency
+    private final WeatherSchedulerService weatherSchedulerService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private HistoryStrategy shortTermStrategy;
@@ -39,13 +45,17 @@ public class ChatServiceImpl implements ChatService {
     public ChatServiceImpl(ChatHistoryRepository chatHistoryRepository,
                            ProfileRepository profileRepository,
                            InvariantRepository invariantRepository,
+                           WeatherLogRepository weatherLogRepository,
                            GigaChatApiService gigaChatApiService,
-                           McpService mcpService) { // New dependency
+                           McpService mcpService,
+                           WeatherSchedulerService weatherSchedulerService) { // New dependency
         this.chatHistoryRepository = chatHistoryRepository;
         this.profileRepository = profileRepository;
         this.invariantRepository = invariantRepository;
+        this.weatherLogRepository = weatherLogRepository;
         this.gigaChatApiService = gigaChatApiService;
         this.mcpService = mcpService; // Initialize new dependency
+        this.weatherSchedulerService = weatherSchedulerService;
         this.shortTermStrategy = new SlidingWindowHistoryStrategy(2);
         this.midTermStrategy = new SlidingWindowHistoryStrategy(10);
         this.longTermStrategy = new UnlimitedHistoryStrategy();
@@ -359,9 +369,14 @@ public class ChatServiceImpl implements ChatService {
             case "/cleanAll":
                 chatHistoryRepository.deleteAll(profileLogin);
                 invariantRepository.deleteAll(profileLogin);
+                weatherLogRepository.deleteAll(profileLogin);
                 currentProfile.setCurrentBranch(1);
                 profileRepository.update(currentProfile);
-                return "All history and invariants for profile " + profileLogin + " cleared and branch reset to 1.";
+                return "All history, invariants, and weather logs for profile " + profileLogin + " cleared and branch reset to 1.";
+            case "/get_weather_start":
+                return handleGetWeatherStart(command, currentProfile);
+            case "/get_weather_stop":
+                return handleGetWeatherStop(currentProfile);
             case "/branch":
                 return createBranch(currentProfile);
             case "/switch":
@@ -560,6 +575,125 @@ public class ChatServiceImpl implements ChatService {
             sb.append("  ").append(server).append("\n");
         }
         return sb.toString();
+    }
+
+    private String handleGetWeatherStart(String command, Profile currentProfile) {
+        String profileLogin = currentProfile.getLogin();
+
+        // Check if already running
+        if (weatherSchedulerService.isRunning(profileLogin)) {
+            return "Weather scheduler is already running. Use /get_weather_stop to stop it first.";
+        }
+
+        // Parse arguments: [-t city] [-p period] [-s summaryCount]
+        WeatherCommandArgs args = parseWeatherCommandArgs(command);
+
+        // Start the scheduler
+        weatherSchedulerService.startWeatherScheduler(
+                profileLogin,
+                args.city,
+                args.period,
+                args.summaryCount
+        );
+
+        WeatherSchedulerConfig config = weatherSchedulerService.getConfig(profileLogin);
+        return String.format("Weather scheduler started for '%s' every %s. Showing last %d results after each fetch.",
+                config.getCity(),
+                config.getPeriodDescription(),
+                config.getSummaryCount());
+    }
+
+    private String handleGetWeatherStop(Profile currentProfile) {
+        String profileLogin = currentProfile.getLogin();
+        boolean stopped = weatherSchedulerService.stopWeatherScheduler(profileLogin);
+        if (stopped) {
+            return "Weather scheduler stopped.";
+        }
+        return "No weather scheduler is currently running.";
+    }
+
+    private static class WeatherCommandArgs {
+        String city = "Moscow";
+        Duration period = Duration.ofHours(1);
+        int summaryCount = 3;
+    }
+
+    private WeatherCommandArgs parseWeatherCommandArgs(String command) {
+        WeatherCommandArgs args = new WeatherCommandArgs();
+
+        // Skip the command name
+        String remainder = command.substring("/get_weather_start".length()).trim();
+        if (remainder.isEmpty()) {
+            return args;
+        }
+
+        // Parse flags: -t <city>, -p <period>, -s <count>
+        String[] tokens = remainder.split("\\s+");
+        for (int i = 0; i < tokens.length; i++) {
+            String token = tokens[i];
+            if (token.equals("-t") && i + 1 < tokens.length) {
+                args.city = tokens[++i];
+            } else if (token.equals("-p") && i + 1 < tokens.length) {
+                args.period = parsePeriod(tokens[++i]);
+            } else if (token.equals("-s") && i + 1 < tokens.length) {
+                try {
+                    args.summaryCount = Integer.parseInt(tokens[++i]);
+                    if (args.summaryCount < 1) {
+                        args.summaryCount = 1;
+                    }
+                } catch (NumberFormatException e) {
+                    // ignore, use default
+                }
+            }
+        }
+
+        return args;
+    }
+
+    private Duration parsePeriod(String periodStr) {
+        if (periodStr.isEmpty()) {
+            return Duration.ofHours(1);
+        }
+
+        // Try to parse as number with suffix: e.g., 10s, 5m, 1h, 1d
+        char suffix = Character.toLowerCase(periodStr.charAt(periodStr.length() - 1));
+        String numPart = periodStr;
+        if (suffix == 's' || suffix == 'm' || suffix == 'h' || suffix == 'd') {
+            numPart = periodStr.substring(0, periodStr.length() - 1);
+        }
+
+        long value;
+        try {
+            value = Long.parseLong(numPart);
+        } catch (NumberFormatException e) {
+            return Duration.ofHours(1); // default
+        }
+
+        return switch (suffix) {
+            case 's' -> Duration.ofSeconds(value);
+            case 'm' -> Duration.ofMinutes(value);
+            case 'h' -> Duration.ofHours(value);
+            case 'd' -> Duration.ofDays(value);
+            default -> Duration.ofHours(value); // default to hours if no suffix
+        };
+    }
+
+    @Override
+    public String startWeatherScheduler(String profileLogin, String city, Duration period, int summaryCount) {
+        weatherSchedulerService.startWeatherScheduler(profileLogin, city, period, summaryCount);
+        WeatherSchedulerConfig config = weatherSchedulerService.getConfig(profileLogin);
+        return String.format("Weather scheduler started for '%s' every %s.", config.getCity(), config.getPeriodDescription());
+    }
+
+    @Override
+    public String stopWeatherScheduler(String profileLogin) {
+        boolean stopped = weatherSchedulerService.stopWeatherScheduler(profileLogin);
+        return stopped ? "Weather scheduler stopped." : "No weather scheduler was running.";
+    }
+
+    @Override
+    public List<WeatherLog> getRecentWeatherLogs(String profileLogin, int limit) {
+        return weatherLogRepository.findRecent(profileLogin, limit);
     }
 
     @FunctionalInterface
