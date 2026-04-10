@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
@@ -24,9 +25,17 @@ public class McpServiceImpl implements McpService {
     @Value("${mcp.server.url:http://localhost:8081}")
     private String mcpServerUrl;
 
+    @Value("${mcp.knowledge.server.url:http://localhost:8082}")
+    private String mcpKnowledgeServerUrl;
+
     private volatile McpSyncClient mcpClient;
     private volatile boolean connected = false;
     private final ReentrantLock connectionLock = new ReentrantLock();
+
+    // Knowledge server client
+    private volatile McpSyncClient mcpKnowledgeClient;
+    private volatile boolean knowledgeConnected = false;
+    private final ReentrantLock knowledgeConnectionLock = new ReentrantLock();
 
     public McpServiceImpl(Function<String, McpSyncClient> mcpClientFactory) {
         this.mcpClientFactory = mcpClientFactory;
@@ -155,6 +164,85 @@ public class McpServiceImpl implements McpService {
      */
     public boolean isConnected() {
         return connected && mcpClient != null && mcpClient.isInitialized();
+    }
+
+    /**
+     * Check if knowledge MCP connection is established
+     * @return true if connected
+     */
+    public boolean isKnowledgeConnected() {
+        return knowledgeConnected && mcpKnowledgeClient != null && mcpKnowledgeClient.isInitialized();
+    }
+
+    /**
+     * Initialize connection to knowledge MCP server
+     * @return true if connection established successfully
+     */
+    public boolean initializeKnowledgeConnection() {
+        knowledgeConnectionLock.lock();
+        try {
+            if (mcpKnowledgeClient != null) {
+                try {
+                    mcpKnowledgeClient.close();
+                } catch (Exception e) {
+                    log.warn("Error closing existing knowledge MCP client: {}", e.getMessage());
+                }
+            }
+
+            mcpKnowledgeClient = mcpClientFactory.apply(mcpKnowledgeServerUrl);
+            knowledgeConnected = false;
+
+            try {
+                McpSchema.InitializeResult initResult = mcpKnowledgeClient.initialize();
+                if (initResult != null) {
+                    knowledgeConnected = true;
+                    log.info("Successfully connected to Knowledge MCP server. Server info: {}", initResult.serverInfo());
+                    return true;
+                }
+            } catch (Exception e) {
+                log.error("Failed to initialize knowledge MCP connection: {}", e.getMessage(), e);
+                knowledgeConnected = false;
+            }
+            return false;
+        } finally {
+            knowledgeConnectionLock.unlock();
+        }
+    }
+
+    /**
+     * Call a tool on the knowledge MCP server
+     */
+    public String callKnowledgeTool(String toolName, Map<String, Object> arguments) {
+        knowledgeConnectionLock.lock();
+        try {
+            if (!isKnowledgeConnected()) {
+                boolean initSuccess = initializeKnowledgeConnection();
+                if (!initSuccess) {
+                    return "Error: Cannot call knowledge tool - Knowledge MCP server is not connected";
+                }
+            }
+
+            try {
+                McpSchema.CallToolResult result = mcpKnowledgeClient.callTool(
+                    new McpSchema.CallToolRequest(toolName, arguments)
+                );
+
+                if (result == null) {
+                    return "Error: Knowledge tool '" + toolName + "' returned null result";
+                }
+
+                if (result.isError()) {
+                    return "Error calling knowledge tool '" + toolName + "': " + extractContent(result);
+                }
+
+                return extractContent(result);
+            } catch (Exception e) {
+                log.error("Failed to call knowledge tool '{}': {}", toolName, e.getMessage(), e);
+                return "Error calling knowledge tool '" + toolName + "': " + e.getMessage();
+            }
+        } finally {
+            knowledgeConnectionLock.unlock();
+        }
     }
 
     /**

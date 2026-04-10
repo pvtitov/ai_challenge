@@ -100,23 +100,30 @@ public class ChatServiceImpl implements ChatService {
 
         // Check if we should call an MCP tool based on user input
         String toolResult = tryCallMcpTool(userInput);
-        
+        String knowledgeResult = tryCallKnowledgeTool(userInput, conversationState);
+
         String invariantPrefix = getInvariantsAsPromptPrefix(currentProfile);
-        
+
         // If we have tool result, add it to the context
         String planPrompt;
         if (toolResult != null && !toolResult.startsWith("Error:") && !toolResult.startsWith("No tool")) {
             // User asked for something we can fulfill via MCP tools
-            planPrompt = invariantPrefix + 
+            planPrompt = invariantPrefix +
                 "You are a planning AI. Based on the user's request, create a step-by-step plan. " +
                 "The following data has been retrieved from an external source and should be used in your response:\n" +
                 toolResult + "\n\n" +
+                "User's request: \"" + userInput + "\". Respond with the plan only.";
+        } else if (knowledgeResult != null && !knowledgeResult.startsWith("Error:") && !knowledgeResult.startsWith("No knowledge") && !knowledgeResult.startsWith("No tool")) {
+            // User asked for knowledge from the knowledge base
+            planPrompt = invariantPrefix +
+                "You are a planning AI. Based on the user's request, the following knowledge has been retrieved:\n" +
+                knowledgeResult + "\n\n" +
                 "User's request: \"" + userInput + "\". Respond with the plan only.";
         } else {
             String planPromptBase = invariantPrefix + "You are a planning AI. Based on the user's request, create a step-by-step plan. The user's request is: \"" + userInput + "\". Respond with the plan only.";
             planPrompt = planPromptBase;
         }
-        
+
         GigaChatComplexResponse planResponse = gigaChatApiService.getCompletion(new JSONArray(), planPrompt);
         String plan = planResponse.getFullResponse();
         conversationState.setLastPlan(plan);
@@ -191,8 +198,185 @@ public class ChatServiceImpl implements ChatService {
         if (!cleaned.isEmpty() && cleaned.length() > 1) {
             return cleaned.substring(0, 1).toUpperCase() + cleaned.substring(1);
         }
-        
+
         return null;
+    }
+
+    /**
+     * Try to call a knowledge MCP tool if the user input matches a knowledge-related pattern
+     * @return tool result or null if no knowledge tool should be called
+     */
+    private String tryCallKnowledgeTool(String userInput, ConversationState conversationState) {
+        // Auto-connect if not already connected
+        if (!mcpService.isKnowledgeConnected()) {
+            boolean connected = mcpService.initializeKnowledgeConnection();
+            if (!connected) {
+                return null; // Connection failed, fall back to LLM-only mode
+            }
+        }
+
+        String input = userInput.toLowerCase();
+
+        // Detect "save knowledge" intent - user wants to extract and save knowledge from the response
+        if (input.contains("save knowledge") || input.contains("save this knowledge") || input.contains("запомни")) {
+            // Store the fact that we need to save knowledge after response
+            // The actual extraction will happen in handleActionApproval
+            conversationState.setSaveKnowledgeRequested(true);
+            return null; // Don't call tool yet, wait for LLM response
+        }
+
+        // Detect "what do you know about X" - list titles matching regex
+        if (input.contains("what do you know") || input.contains("что ты знаешь") || input.contains("list knowledge") || input.contains("покажи знания")) {
+            String regex = extractSearchTerm(userInput);
+            if (regex == null) {
+                regex = userInput.replaceAll("(?i)(what do you know about|what do you know|что ты знаешь про|что ты знаешь о|list knowledge|покажи знания|\\?)", "").trim();
+            }
+            System.out.println("call knowledge tool knowledge_contents with regex: " + (regex.isEmpty() ? "(all)" : regex));
+            if (!regex.isEmpty()) {
+                return mcpService.callKnowledgeTool("knowledge_contents", Map.of("regex", regex));
+            } else {
+                return mcpService.callKnowledgeTool("knowledge_contents", Map.of());
+            }
+        }
+
+        // Detect "How to X?" or general knowledge search - find knowledge matching regex
+        if (input.startsWith("how to") || input.startsWith("как ") || (input.contains("how to") && input.contains("?"))) {
+            String regex = extractSearchTerm(userInput);
+            if (regex != null && !regex.isEmpty()) {
+                System.out.println("call knowledge tool find_knowledge with regex: " + regex);
+                return mcpService.callKnowledgeTool("find_knowledge", Map.of("regex", regex));
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract search term from knowledge query
+     */
+    private String extractSearchTerm(String input) {
+        // Remove common query prefixes to get the actual search term
+        String cleaned = input.replaceAll("(?i)^(what do you know about|what do you know|tell me about|что ты знаешь про|что ты знаешь о|list knowledge matching|покажи знания|find knowledge|найди знание|как |how to )", "").trim();
+        cleaned = cleaned.replaceAll("[?!.]+$", "").trim();
+        if (!cleaned.isEmpty() && cleaned.length() > 1) {
+            return cleaned;
+        }
+        return null;
+    }
+
+    /**
+     * Extract knowledge from the stored action result that contains marked knowledge blocks
+     */
+    private String extractAndSaveKnowledgeFromActionResult(ConversationState conversationState) {
+        if (!mcpService.isKnowledgeConnected()) {
+            boolean connected = mcpService.initializeKnowledgeConnection();
+            if (!connected) {
+                return "";
+            }
+        }
+
+        // Get the stored action result
+        String actionResult = conversationState.getLastActionResult();
+        if (actionResult == null || actionResult.isEmpty()) {
+            return "";
+        }
+
+        try {
+            // Parse knowledge blocks - support multiple marker formats for LLM tolerance
+            StringBuilder savedKnowledge = new StringBuilder();
+
+            // Try parsing with exact 3-bracket format first: <<<KNOWLEDGE_START>>>
+            savedKnowledge.append(parseKnowledgeBlocks(actionResult, "<<<KNOWLEDGE_START>>>", "<<<KNOWLEDGE_END>>>"));
+
+            // If nothing found, try with 2-bracket format: <<<KNOWLEDGE_START>>
+            if (savedKnowledge.length() == 0) {
+                savedKnowledge.append(parseKnowledgeBlocks(actionResult, "<<<KNOWLEDGE_START>>", "<<<KNOWLEDGE_END>>"));
+            }
+
+            // If still nothing found, try single bracket: <<<KNOWLEDGE_START>
+            if (savedKnowledge.length() == 0) {
+                savedKnowledge.append(parseKnowledgeBlocks(actionResult, "<<<KNOWLEDGE_START>", "<<<KNOWLEDGE_END>"));
+            }
+
+            // If still nothing, try to find any TITLE:/DESCRIPTION: pattern
+            if (savedKnowledge.length() == 0 && actionResult.contains("TITLE:") && actionResult.contains("DESCRIPTION:")) {
+                int titleStart = actionResult.indexOf("TITLE:") + 6;
+                int titleLineEnd = actionResult.indexOf("\n", titleStart);
+                if (titleLineEnd > titleStart) {
+                    String title = actionResult.substring(titleStart, titleLineEnd).trim();
+                    int descStart = actionResult.indexOf("DESCRIPTION:") + 12;
+                    if (descStart > 12) {
+                        String description = actionResult.substring(descStart).trim();
+                        mcpService.callKnowledgeTool("save_knowledge", Map.of("title", title, "description", description));
+                        System.out.println("call tool save_knowledge with title: " + title);
+                        savedKnowledge.append("\n✓ Saved knowledge: ").append(title);
+                    }
+                }
+            }
+
+            return savedKnowledge.length() > 0 ? savedKnowledge.toString() : "\nNo extractable knowledge found.";
+        } catch (Exception e) {
+            return "\nFailed to extract knowledge: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Parse knowledge blocks with specific start/end markers
+     */
+    private StringBuilder parseKnowledgeBlocks(String text, String startMarker, String endMarker) {
+        StringBuilder result = new StringBuilder();
+        int startIndex = 0;
+        while (true) {
+            int blockStart = text.indexOf(startMarker, startIndex);
+            if (blockStart == -1) break;
+
+            int blockEnd = text.indexOf(endMarker, blockStart + startMarker.length());
+            if (blockEnd == -1) break;
+
+            String block = text.substring(blockStart + startMarker.length(), blockEnd).trim();
+
+            // Parse title and description
+            String title = null;
+            String description = null;
+
+            int titleLineStart = block.indexOf("TITLE:") + 6;
+            if (titleLineStart > 5) {
+                int titleLineEnd = block.indexOf("\n", titleLineStart);
+                if (titleLineEnd > titleLineStart) {
+                    title = block.substring(titleLineStart, titleLineEnd).trim();
+                    description = block.substring(titleLineEnd).trim();
+                } else {
+                    title = block.substring(titleLineStart).trim();
+                }
+            }
+
+            if (title != null && description != null) {
+                String saveResult = mcpService.callKnowledgeTool("save_knowledge", Map.of("title", title, "description", description));
+                System.out.println("call tool save_knowledge with title: " + title + " -> " + saveResult);
+                result.append("\n✓ Saved knowledge: ").append(title);
+            }
+
+            startIndex = blockEnd;
+        }
+        return result;
+    }
+
+    /**
+     * Get a formatted list of all knowledge titles from the knowledge base
+     */
+    private String getKnowledgeTitlesList() {
+        if (!mcpService.isKnowledgeConnected()) {
+            boolean connected = mcpService.initializeKnowledgeConnection();
+            if (!connected) {
+                return "Knowledge base: not available (knowledge server not connected)";
+            }
+        }
+
+        String result = mcpService.callKnowledgeTool("knowledge_contents", Map.of());
+        if (result != null && !result.startsWith("Error:")) {
+            return "Knowledge Base Contents:\n" + result;
+        }
+        return "Knowledge Base: " + (result != null ? result : "empty");
     }
 
     private ChatResponse handlePlanApproval(String confirmation, ConversationState conversationState, Profile currentProfile) throws IOException {
@@ -203,12 +387,27 @@ public class ChatServiceImpl implements ChatService {
 
         String plan = conversationState.getLastPlan();
         String invariantPrefix = getInvariantsAsPromptPrefix(currentProfile); // Get invariants
-        String actionPrompt = invariantPrefix + "You are an executing AI. Carry out the following plan: \"" + plan + "\". The original user request was: \"" + conversationState.getOriginalPrompt() + "\".";
-        
+
+        String actionPrompt;
+        if (conversationState.isSaveKnowledgeRequested()) {
+            actionPrompt = invariantPrefix + "You are an executing AI. Carry out the following plan: \"" + plan + "\". The original user request was: \"" + conversationState.getOriginalPrompt() + "\".\n\n" +
+                "IMPORTANT: If your response contains essential procedural knowledge that would be valuable to save for future reference, mark it using the following format:\n" +
+                "<<<KNOWLEDGE_START>>>\n" +
+                "TITLE: How to [concise title]\n" +
+                "DESCRIPTION: [detailed explanation formatted as markdown]\n" +
+                "<<<KNOWLEDGE_END>>>\n\n" +
+                "Only mark truly valuable knowledge this way. Do not mark trivial or obvious information.";
+        } else {
+            actionPrompt = invariantPrefix + "You are an executing AI. Carry out the following plan: \"" + plan + "\". The original user request was: \"" + conversationState.getOriginalPrompt() + "\".";
+        }
+
         // Include history in the action prompt
         JSONArray history = getHistoryAsJson(currentProfile);
         GigaChatComplexResponse actionResponse = gigaChatApiService.getCompletion(history, actionPrompt);
         String actionResult = actionResponse.getFullResponse();
+
+        // Store action result for potential knowledge extraction
+        conversationState.setLastActionResult(actionResult);
 
         conversationState.setStage(Stage.AWAITING_ACTION_APPROVAL);
 
@@ -255,14 +454,23 @@ public class ChatServiceImpl implements ChatService {
             // Verification successful
             // Save messages to history
             saveConversationToHistory(conversationState.getOriginalPrompt(), verificationResult, currentProfile);
-            
+
+            // Extract and save knowledge from action result if requested
+            String knowledgeSuffix = "";
+            if (conversationState.isSaveKnowledgeRequested()) {
+                knowledgeSuffix = extractAndSaveKnowledgeFromActionResult(conversationState);
+            }
+
+            // Append knowledge titles list to the response
+            String knowledgeList = getKnowledgeTitlesList();
+
             long cumulativeTokens = chatHistoryRepository.getCumulativeTokens(currentProfile.getCurrentBranch(), currentProfile.getLogin());
-            
+
             // Reset for the next interaction
             conversationState.reset();
 
             return new ChatResponse(
-                verificationResult,
+                verificationResult + knowledgeSuffix + "\n\n---\n\n" + knowledgeList,
                 verificationResponse.getSummary(),
                 verificationResponse.getStickyFacts(),
                 verificationResponse.getPromptTokens(),
@@ -565,14 +773,39 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private String listMcpServersFormatted() {
+        // List weather server tools
         List<String> servers = mcpService.listMcpServers();
-        if (servers.isEmpty()) {
-            return "No MCP servers found.";
-        }
         StringBuilder sb = new StringBuilder();
         sb.append("Available MCP Servers and Resources:\n");
-        for (String server : servers) {
-            sb.append("  ").append(server).append("\n");
+        if (servers.isEmpty()) {
+            sb.append("  Weather Server (http://localhost:8081): not connected\n");
+        } else {
+            for (String server : servers) {
+                sb.append("  ").append(server).append("\n");
+            }
+        }
+
+        // List knowledge server tools
+        sb.append("\nKnowledge Server (http://localhost:8082):\n");
+        if (!mcpService.isKnowledgeConnected()) {
+            boolean connected = mcpService.initializeKnowledgeConnection();
+            if (!connected) {
+                sb.append("  not connected\n");
+            }
+        }
+        if (mcpService.isKnowledgeConnected()) {
+            String knowledgeTools = mcpService.callKnowledgeTool("knowledge_contents", Map.of());
+            if (knowledgeTools != null) {
+                String allTitles = mcpService.callKnowledgeTool("knowledge_contents", Map.of());
+                sb.append("  Tools:\n");
+                sb.append("    - save_knowledge: Save a piece of knowledge with title and description\n");
+                sb.append("    - knowledge_contents: List knowledge titles, optionally filtered by regex\n");
+                sb.append("    - find_knowledge: Find knowledge by regex matching title\n");
+                if (allTitles != null && !allTitles.startsWith("No knowledge") && !allTitles.startsWith("Error")) {
+                    sb.append("  Contents:\n");
+                    sb.append("    ").append(allTitles.replace("\n", "\n    "));
+                }
+            }
         }
         return sb.toString();
     }

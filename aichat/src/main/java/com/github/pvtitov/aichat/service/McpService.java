@@ -9,4 +9,9 @@ public interface McpService {
     boolean isConnected();
     String getConnectionStatus();
     String callTool(String toolName, Map<String, Object> arguments);
+
+    // Knowledge server methods
+    boolean initializeKnowledgeConnection();
+    boolean isKnowledgeConnected();
+    String callKnowledgeTool(String toolName, Map<String, Object> arguments);
 }
