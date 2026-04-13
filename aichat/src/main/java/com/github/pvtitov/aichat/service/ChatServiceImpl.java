@@ -604,6 +604,14 @@ public class ChatServiceImpl implements ChatService {
             case "/mcp_connect":
                 boolean success = mcpService.initializeConnection();
                 return success ? "MCP connection established successfully." : "Failed to establish MCP connection. Check logs for details.";
+            case "/mcp_github_connect":
+                boolean githubSuccess = mcpService.initializeGitHubConnection();
+                return githubSuccess ? "GitHub MCP connection established successfully." : "Failed to establish GitHub MCP connection. Check logs for details.";
+            case "/mcp_github_status":
+                boolean githubConnected = mcpService.isGitHubConnected();
+                return "GitHub MCP Connection Status: " + (githubConnected ? "ACTIVE" : "INACTIVE");
+            case "/mcp_github_list":
+                return listGitHubMcpServersFormatted();
             default:
                 return "Unknown command: " + cmd;
         }
@@ -807,6 +815,38 @@ public class ChatServiceImpl implements ChatService {
                 }
             }
         }
+        return sb.toString();
+    }
+
+    private String listGitHubMcpServersFormatted() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("GitHub MCP Server (http://localhost:8083):\n");
+        
+        if (!mcpService.isGitHubConnected()) {
+            boolean connected = mcpService.initializeGitHubConnection();
+            if (!connected) {
+                sb.append("  not connected\n");
+                sb.append("  Make sure GITHUB_TOKEN environment variable is set\n");
+                sb.append("  Start the mcp-github server on port 8083\n");
+                return sb.toString();
+            }
+        }
+        
+        if (mcpService.isGitHubConnected()) {
+            sb.append("  Available Tools:\n");
+            sb.append("    - clone_repository: Clone a GitHub repository locally\n");
+            sb.append("    - get_repo_structure: Get file/directory structure of cloned repo\n");
+            sb.append("    - read_file_contents: Read contents of a specific file\n");
+            sb.append("    - list_issues: List issues from a GitHub repository\n");
+            sb.append("    - list_pull_requests: List pull requests from a GitHub repository\n");
+            sb.append("    - get_pull_request_details: Get detailed information about a PR\n");
+            sb.append("    - create_pull_request: Create a new pull request\n");
+            sb.append("    - search_repositories: Search for GitHub repositories\n");
+            sb.append("    - get_readme: Get README content from a repository\n");
+            sb.append("    - commit_and_push: Commit and push changes to GitHub\n");
+            sb.append("    - create_branch: Create a new branch in local repository\n");
+        }
+        
         return sb.toString();
     }
 

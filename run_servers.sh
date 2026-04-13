@@ -6,6 +6,7 @@
 AICHAT_DIR="/Users/paveltitov/Documents/programming/ai_challenge/aichat"
 MCP_SERVER_DIR="/Users/paveltitov/Documents/programming/ai_challenge/mcp-test-server"
 MCP_KNOWLEDGE_DIR="/Users/paveltitov/Documents/programming/ai_challenge/mcp-knowledge"
+MCP_GITHUB_DIR="/Users/paveltitov/Documents/programming/ai_challenge/mcp-github"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -28,6 +29,10 @@ cleanup() {
     if [ ! -z "$MCP_KNOWLEDGE_PID" ]; then
         kill $MCP_KNOWLEDGE_PID 2>/dev/null
         echo "MCP knowledge server stopped"
+    fi
+    if [ ! -z "$MCP_GITHUB_PID" ]; then
+        kill $MCP_GITHUB_PID 2>/dev/null
+        echo "MCP GitHub server stopped"
     fi
     if [ ! -z "$AICHAT_PID" ]; then
         kill $AICHAT_PID 2>/dev/null
@@ -111,8 +116,35 @@ for i in {1..30}; do
     fi
 done
 
+# Step 3b: Start MCP GitHub Server
+echo -e "\n${YELLOW}Step 6: Starting MCP GitHub Server on port 8083...${NC}"
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo -e "${RED}Warning: GITHUB_TOKEN environment variable is not set${NC}"
+    echo -e "${YELLOW}GitHub MCP server will not start without a token${NC}"
+    echo -e "${YELLOW}Set it with: export GITHUB_TOKEN=your_token_here${NC}"
+else
+    cd "$MCP_GITHUB_DIR"
+    mvn spring-boot:run &
+    MCP_GITHUB_PID=$!
+    echo "MCP GitHub Server PID: $MCP_GITHUB_PID"
+
+    # Wait for MCP GitHub server to start
+    echo -n "Waiting for MCP GitHub server"
+    for i in {1..30}; do
+        sleep 1
+        echo -n "."
+        if curl -s http://localhost:8083/actuator/health >/dev/null 2>&1 || curl -s http://localhost:8083 >/dev/null 2>&1; then
+            echo -e "\n${GREEN}✓ MCP GitHub Server is running${NC}"
+            break
+        fi
+        if [ $i -eq 30 ]; then
+            echo -e "\n${RED}✗ MCP GitHub Server failed to start within 30 seconds${NC}"
+        fi
+    done
+fi
+
 # Step 4: Start AIChat
-echo -e "\n${YELLOW}Step 6: Starting AIChat on port 8080...${NC}"
+echo -e "\n${YELLOW}Step 7: Starting AIChat on port 8080...${NC}"
 cd "$AICHAT_DIR"
 mvn spring-boot:run &
 AICHAT_PID=$!
@@ -138,12 +170,18 @@ echo -e "${GREEN}  All servers are running!               ${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "${YELLOW}MCP Test Server:${NC}      http://localhost:8081"
 echo -e "${YELLOW}MCP Knowledge Server:${NC} http://localhost:8082"
+echo -e "${YELLOW}MCP GitHub Server:${NC}    http://localhost:8083 (requires GITHUB_TOKEN)"
 echo -e "${YELLOW}AIChat Web Client:${NC}    http://localhost:8080"
 echo ""
 echo -e "${YELLOW}Available MCP Commands:${NC}"
 echo -e "  ${GREEN}/mcp_connect${NC}   - Connect to MCP servers"
 echo -e "  ${GREEN}/mcp_status${NC}  - Check connection status"
 echo -e "  ${GREEN}/mcp_list${NC}    - List available tools, resources, and prompts"
+echo ""
+echo -e "${YELLOW}GitHub MCP Commands:${NC}"
+echo -e "  ${GREEN}/mcp_github_connect${NC}   - Connect to GitHub MCP server"
+echo -e "  ${GREEN}/mcp_github_status${NC}  - Check GitHub connection status"
+echo -e "  ${GREEN}/mcp_github_list${NC}    - List available GitHub tools"
 echo ""
 echo -e "${YELLOW}Knowledge Commands (via natural language):${NC}"
 echo -e "  \"How to do X?\" - finds knowledge matching regex"

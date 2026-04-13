@@ -28,6 +28,9 @@ public class McpServiceImpl implements McpService {
     @Value("${mcp.knowledge.server.url:http://localhost:8082}")
     private String mcpKnowledgeServerUrl;
 
+    @Value("${mcp.github.server.url:http://localhost:8083}")
+    private String mcpGitHubServerUrl;
+
     private volatile McpSyncClient mcpClient;
     private volatile boolean connected = false;
     private final ReentrantLock connectionLock = new ReentrantLock();
@@ -36,6 +39,11 @@ public class McpServiceImpl implements McpService {
     private volatile McpSyncClient mcpKnowledgeClient;
     private volatile boolean knowledgeConnected = false;
     private final ReentrantLock knowledgeConnectionLock = new ReentrantLock();
+
+    // GitHub server client
+    private volatile McpSyncClient mcpGitHubClient;
+    private volatile boolean gitHubConnected = false;
+    private final ReentrantLock gitHubConnectionLock = new ReentrantLock();
 
     public McpServiceImpl(Function<String, McpSyncClient> mcpClientFactory) {
         this.mcpClientFactory = mcpClientFactory;
@@ -242,6 +250,86 @@ public class McpServiceImpl implements McpService {
             }
         } finally {
             knowledgeConnectionLock.unlock();
+        }
+    }
+
+    /**
+     * Check if GitHub MCP connection is established
+     * @return true if connected
+     */
+    public boolean isGitHubConnected() {
+        return gitHubConnected && mcpGitHubClient != null && mcpGitHubClient.isInitialized();
+    }
+
+    /**
+     * Initialize connection to GitHub MCP server
+     * @return true if connection established successfully
+     */
+    public boolean initializeGitHubConnection() {
+        gitHubConnectionLock.lock();
+        try {
+            if (mcpGitHubClient != null) {
+                try {
+                    mcpGitHubClient.close();
+                } catch (Exception e) {
+                    log.warn("Error closing existing GitHub MCP client: {}", e.getMessage());
+                }
+            }
+
+            mcpGitHubClient = mcpClientFactory.apply(mcpGitHubServerUrl);
+            gitHubConnected = false;
+
+            try {
+                McpSchema.InitializeResult initResult = mcpGitHubClient.initialize();
+                if (initResult != null) {
+                    gitHubConnected = true;
+                    log.info("Successfully connected to GitHub MCP server. Server info: {}", initResult.serverInfo());
+                    log.info("Server instructions: {}", initResult.instructions());
+                    return true;
+                }
+            } catch (Exception e) {
+                log.error("Failed to initialize GitHub MCP connection: {}", e.getMessage(), e);
+                gitHubConnected = false;
+            }
+            return false;
+        } finally {
+            gitHubConnectionLock.unlock();
+        }
+    }
+
+    /**
+     * Call a tool on the GitHub MCP server
+     */
+    public String callGitHubTool(String toolName, Map<String, Object> arguments) {
+        gitHubConnectionLock.lock();
+        try {
+            if (!isGitHubConnected()) {
+                boolean initSuccess = initializeGitHubConnection();
+                if (!initSuccess) {
+                    return "Error: Cannot call GitHub tool - GitHub MCP server is not connected";
+                }
+            }
+
+            try {
+                McpSchema.CallToolResult result = mcpGitHubClient.callTool(
+                    new McpSchema.CallToolRequest(toolName, arguments)
+                );
+
+                if (result == null) {
+                    return "Error: GitHub tool '" + toolName + "' returned null result";
+                }
+
+                if (result.isError()) {
+                    return "Error calling GitHub tool '" + toolName + "': " + extractContent(result);
+                }
+
+                return extractContent(result);
+            } catch (Exception e) {
+                log.error("Failed to call GitHub tool '{}': {}", toolName, e.getMessage(), e);
+                return "Error calling GitHub tool '" + toolName + "': " + e.getMessage();
+            }
+        } finally {
+            gitHubConnectionLock.unlock();
         }
     }
 

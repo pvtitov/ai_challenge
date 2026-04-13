@@ -14,4 +14,9 @@ public interface McpService {
     boolean initializeKnowledgeConnection();
     boolean isKnowledgeConnected();
     String callKnowledgeTool(String toolName, Map<String, Object> arguments);
+
+    // GitHub server methods
+    boolean initializeGitHubConnection();
+    boolean isGitHubConnected();
+    String callGitHubTool(String toolName, Map<String, Object> arguments);
 }
