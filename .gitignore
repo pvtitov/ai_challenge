@@ -2,7 +2,7 @@ set_api_key.sh
 shared/.gigachat_token_cache
 *.idea/
 *target/
-*aichat.db
+*.db
 *logs/
 *.DS_Store
 chat_history.json

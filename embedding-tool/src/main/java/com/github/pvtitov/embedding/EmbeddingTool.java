@@ -1,23 +1,35 @@
 package com.github.pvtitov.embedding;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.LogManager;
 
 /**
  * CLI tool for generating embeddings from text files using Ollama.
  *
  * Usage:
- *   java -jar embedding-tool.jar /index file1.txt file2.txt [--chunk 500] [--overlap 50]
- *   java -jar embedding-tool.jar /index_print [count]
+ *   java -jar embedding-tool.jar file1.txt file2.pdf [--chunk 500] [--overlap 50]
  */
 public class EmbeddingTool {
 
     private static final int DEFAULT_CHUNK_SIZE = 500;
     private static final int DEFAULT_OVERLAP_SIZE = 50;
+
+    static {
+        // Load logging configuration to suppress PDFBox warnings
+        try (InputStream is = EmbeddingTool.class.getResourceAsStream("/logging.properties")) {
+            if (is != null) {
+                LogManager.getLogManager().readConfiguration(is);
+            }
+        } catch (IOException e) {
+            // Ignore
+        }
+    }
 
     public static void main(String[] args) {
         if (args.length == 0) {
@@ -25,32 +37,12 @@ public class EmbeddingTool {
             System.exit(1);
         }
 
-        String command = args[0];
-
-        try {
-            switch (command) {
-                case "/index" -> handleIndex(args);
-                case "/index_print" -> handleIndexPrint(args);
-                default -> {
-                    System.err.println("Unknown command: " + command);
-                    printUsage();
-                    System.exit(1);
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
-            e.printStackTrace();
-            System.exit(1);
-        }
-    }
-
-    private static void handleIndex(String[] args) {
         // Parse arguments
         List<String> filePaths = new ArrayList<>();
         int chunkSize = DEFAULT_CHUNK_SIZE;
         int overlapSize = DEFAULT_OVERLAP_SIZE;
 
-        int i = 1;
+        int i = 0;
         while (i < args.length) {
             String arg = args[i];
             if ("--chunk".equals(arg) && i + 1 < args.length) {
@@ -106,7 +98,7 @@ public class EmbeddingTool {
 
                 String content;
                 try {
-                    content = Files.readString(path);
+                    content = readFile(path);
                 } catch (IOException e) {
                     System.err.println("Warning: Cannot read file, skipping: " + filePath + " - " + e.getMessage());
                     continue;
@@ -150,66 +142,33 @@ public class EmbeddingTool {
         }
     }
 
-    private static void handleIndexPrint(String[] args) {
-        Integer limit = null;
-        if (args.length > 1) {
-            try {
-                limit = Integer.parseInt(args[1]);
-            } catch (NumberFormatException e) {
-                System.err.println("Error: Invalid number format for limit: " + args[1]);
-                System.exit(1);
-            }
-        }
+    /**
+     * Reads file content. Supports .txt (plain text) and .pdf files.
+     */
+    private static String readFile(Path path) throws IOException {
+        String fileName = path.getFileName().toString().toLowerCase();
 
-        try (EmbeddingRepository repo = new EmbeddingRepository()) {
-            repo.initialize();
-
-            int total = repo.count();
-            if (total == 0) {
-                System.out.println("No entries in the index. Use /index to add files first.");
-                return;
-            }
-
-            List<EmbeddingRepository.IndexedEntry> entries = repo.findByLimit(limit);
-
-            System.out.println("=== Embedding Index Contents ===");
-            if (limit != null) {
-                System.out.println("Showing first " + Math.min(limit, entries.size()) + " of " + total + " entries");
-            } else {
-                System.out.println("Total entries: " + total);
-            }
-            System.out.println();
-
-            for (EmbeddingRepository.IndexedEntry entry : entries) {
-                System.out.println(entry);
-                System.out.println();
-            }
-
-        } catch (SQLException e) {
-            System.err.println("Database error: " + e.getMessage());
-            System.exit(1);
+        if (fileName.endsWith(".pdf")) {
+            return PdfReader.readPdf(path);
+        } else {
+            return Files.readString(path);
         }
     }
 
     private static void printUsage() {
         System.out.println("""
                 Usage:
-                  java -jar embedding-tool.jar /index <file1> [file2...] [--chunk SIZE] [--overlap SIZE]
-                  java -jar embedding-tool.jar /index_print [COUNT]
+                  java -jar embedding-tool.jar <file1> [file2...] [--chunk SIZE] [--overlap SIZE]
 
-                Commands:
-                  /index        Index files into embeddings
-                    --chunk     Chunk size (default: 500)
-                    --overlap   Overlap size (default: 50)
+                Options:
+                  --chunk     Chunk size (default: 500)
+                  --overlap   Overlap size (default: 50)
 
-                  /index_print  Print index contents
-                    COUNT       Limit number of entries to print (default: all)
+                Supported file types: .txt, .pdf
 
                 Examples:
-                  java -jar embedding-tool.jar /index file.txt
-                  java -jar embedding-tool.jar /index file1.txt file2.txt --chunk 1000 --overlap 100
-                  java -jar embedding-tool.jar /index_print
-                  java -jar embedding-tool.jar /index_print 5
+                  java -jar embedding-tool.jar file.txt
+                  java -jar embedding-tool.jar file1.txt file2.pdf --chunk 1000 --overlap 100
                 """);
     }
 }

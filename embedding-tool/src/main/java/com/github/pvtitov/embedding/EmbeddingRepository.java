@@ -108,34 +108,20 @@ public class EmbeddingRepository implements AutoCloseable {
      * Retrieves all entries from the index.
      */
     public List<IndexedEntry> findAll() throws SQLException {
-        return findByLimit(null);
-    }
-
-    /**
-     * Retrieves up to `limit` entries from the index.
-     */
-    public List<IndexedEntry> findByLimit(Integer limit) throws SQLException {
         List<IndexedEntry> entries = new ArrayList<>();
         String sql = "SELECT chunk_id, source, title, section, content, created_at FROM embedding_index ORDER BY chunk_id";
-        if (limit != null) {
-            sql += " LIMIT ?";
-        }
 
-        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            if (limit != null) {
-                pstmt.setInt(1, limit);
-            }
-            try (ResultSet rs = pstmt.executeQuery()) {
-                while (rs.next()) {
-                    entries.add(new IndexedEntry(
-                            rs.getInt("chunk_id"),
-                            rs.getString("source"),
-                            rs.getString("title"),
-                            rs.getString("section"),
-                            rs.getString("content"),
-                            rs.getTimestamp("created_at")
-                    ));
-                }
+        try (PreparedStatement pstmt = connection.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
+            while (rs.next()) {
+                entries.add(new IndexedEntry(
+                        rs.getInt("chunk_id"),
+                        rs.getString("source"),
+                        rs.getString("title"),
+                        rs.getString("section"),
+                        rs.getString("content"),
+                        rs.getTimestamp("created_at")
+                ));
             }
         }
         return entries;
@@ -152,15 +138,6 @@ public class EmbeddingRepository implements AutoCloseable {
                 return rs.getInt(1);
             }
             return 0;
-        }
-    }
-
-    /**
-     * Deletes all entries from the index.
-     */
-    public void clear() throws SQLException {
-        try (Statement stmt = connection.createStatement()) {
-            stmt.execute("DELETE FROM embedding_index");
         }
     }
 
