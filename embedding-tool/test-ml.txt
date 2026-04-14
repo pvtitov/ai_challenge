@@ -1,0 +1,19 @@
+# Machine Learning Basics
+
+Machine learning is a subset of artificial intelligence that focuses on developing algorithms that allow computers to learn from data without being explicitly programmed. The core idea is to build systems that can improve their performance over time as they are exposed to more data.
+
+## Types of Machine Learning
+
+Supervised learning is when the model is trained on labeled data. The algorithm learns to map inputs to known outputs. Common examples include classification and regression tasks.
+
+Unsupervised learning works with unlabeled data. The algorithm tries to find hidden patterns or structures in the data. Clustering and dimensionality reduction are common unsupervised techniques.
+
+Reinforcement learning involves an agent that learns to make decisions by interacting with an environment. The agent receives rewards or penalties based on its actions and learns to maximize cumulative rewards.
+
+## Common Algorithms
+
+Linear regression predicts continuous values by fitting a line to data points. It is one of the simplest and most widely used algorithms.
+
+Decision trees split data based on feature values to make predictions. They are easy to interpret and can handle both classification and regression tasks.
+
+Neural networks are inspired by the human brain. They consist of layers of interconnected nodes that process information. Deep learning uses neural networks with many layers.
