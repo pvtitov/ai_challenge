@@ -2,10 +2,11 @@ set_api_key.sh
 shared/.gigachat_token_cache
 *.idea/
 *target/
-*.db
+*.db*
 *logs/
 *.DS_Store
 chat_history.json
 *.jar
 *.log
 *.json
+*.pdf

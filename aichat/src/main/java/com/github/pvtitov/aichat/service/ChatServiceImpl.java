@@ -36,6 +36,7 @@ public class ChatServiceImpl implements ChatService {
     private final GigaChatApiService gigaChatApiService;
     private final McpService mcpService; // New dependency
     private final WeatherSchedulerService weatherSchedulerService;
+    private final EmbeddingSearchService embeddingSearchService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private HistoryStrategy shortTermStrategy;
@@ -48,14 +49,16 @@ public class ChatServiceImpl implements ChatService {
                            WeatherLogRepository weatherLogRepository,
                            GigaChatApiService gigaChatApiService,
                            McpService mcpService,
-                           WeatherSchedulerService weatherSchedulerService) { // New dependency
+                           WeatherSchedulerService weatherSchedulerService,
+                           EmbeddingSearchService embeddingSearchService) {
         this.chatHistoryRepository = chatHistoryRepository;
         this.profileRepository = profileRepository;
         this.invariantRepository = invariantRepository;
         this.weatherLogRepository = weatherLogRepository;
         this.gigaChatApiService = gigaChatApiService;
-        this.mcpService = mcpService; // Initialize new dependency
+        this.mcpService = mcpService;
         this.weatherSchedulerService = weatherSchedulerService;
+        this.embeddingSearchService = embeddingSearchService;
         this.shortTermStrategy = new SlidingWindowHistoryStrategy(2);
         this.midTermStrategy = new SlidingWindowHistoryStrategy(10);
         this.longTermStrategy = new UnlimitedHistoryStrategy();
@@ -102,6 +105,17 @@ public class ChatServiceImpl implements ChatService {
         String toolResult = tryCallMcpTool(userInput);
         String knowledgeResult = tryCallKnowledgeTool(userInput, conversationState);
 
+        // If knowledge MCP didn't find matches, try semantic search through embeddings
+        String embeddingContext = "";
+        if ((knowledgeResult == null || knowledgeResult.startsWith("No knowledge") || knowledgeResult.startsWith("No tool") || knowledgeResult.startsWith("Error:"))
+                && embeddingSearchService.isReady()) {
+            List<EmbeddingSearchResult> searchResults = embeddingSearchService.search(userInput);
+            if (!searchResults.isEmpty()) {
+                embeddingContext = embeddingSearchService.formatResultsAsContext(searchResults);
+                System.out.println("Embedding search found " + searchResults.size() + " relevant chunk(s)");
+            }
+        }
+
         String invariantPrefix = getInvariantsAsPromptPrefix(currentProfile);
 
         // If we have tool result, add it to the context
@@ -118,6 +132,12 @@ public class ChatServiceImpl implements ChatService {
             planPrompt = invariantPrefix +
                 "You are a planning AI. Based on the user's request, the following knowledge has been retrieved:\n" +
                 knowledgeResult + "\n\n" +
+                "User's request: \"" + userInput + "\". Respond with the plan only.";
+        } else if (!embeddingContext.isEmpty()) {
+            // User asked something that matched embeddings semantically
+            planPrompt = invariantPrefix +
+                "You are a planning AI. Based on the user's request, the following relevant knowledge has been retrieved from saved documents:\n" +
+                embeddingContext + "\n\n" +
                 "User's request: \"" + userInput + "\". Respond with the plan only.";
         } else {
             String planPromptBase = invariantPrefix + "You are a planning AI. Based on the user's request, create a step-by-step plan. The user's request is: \"" + userInput + "\". Respond with the plan only.";
