@@ -22,6 +22,24 @@ public class AppConfig {
     @Value("${embedding.db.path:embeddings.db}")
     private String embeddingDbPath;
 
+    @Value("${ollama.url:http://localhost:11434}")
+    private String ollamaUrl;
+
+    @Value("${ollama.model:nomic-embed-text}")
+    private String ollamaModel;
+
+    @Value("${embedding.topKBeforeRerank:10}")
+    private int topKBeforeRerank;
+
+    @Value("${embedding.topKAfterRerank:5}")
+    private int topKAfterRerank;
+
+    @Value("${embedding.similarityThreshold:0.6}")
+    private double similarityThreshold;
+
+    @Value("${embedding.queryRewrite.enabled:false}")
+    private boolean queryRewriteEnabled;
+
     @Bean
     public DataSource dataSource() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource();
@@ -72,7 +90,13 @@ public class AppConfig {
      */
     @Bean
     public EmbeddingSearchService embeddingSearchService(EmbeddingRepository embeddingRepository) {
-        EmbeddingSearchService service = new EmbeddingSearchService();
+        EmbeddingSearchService service = new EmbeddingSearchService(
+                ollamaUrl,
+                ollamaModel,
+                topKBeforeRerank,
+                topKAfterRerank,
+                similarityThreshold
+        );
         service.setEmbeddingRepository(embeddingRepository);
         return service;
     }

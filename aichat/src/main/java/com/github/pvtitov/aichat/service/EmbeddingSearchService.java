@@ -31,25 +31,28 @@ public class EmbeddingSearchService {
 
     private static final String DEFAULT_OLLAMA_URL = "http://localhost:11434";
     private static final String DEFAULT_MODEL = "nomic-embed-text";
-    private static final int DEFAULT_TOP_K = 5;
+    private static final int DEFAULT_TOP_K_BEFORE_RERANK = 10;
+    private static final int DEFAULT_TOP_K_AFTER_RERANK = 5;
     private static final double DEFAULT_SIMILARITY_THRESHOLD = 0.6;
 
     private final String ollamaUrl;
     private final String model;
-    private final int topK;
+    private final int topKBeforeRerank;
+    private final int topKAfterRerank;
     private final double similarityThreshold;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private EmbeddingRepository embeddingRepository;
 
     public EmbeddingSearchService() {
-        this(DEFAULT_OLLAMA_URL, DEFAULT_MODEL, DEFAULT_TOP_K, DEFAULT_SIMILARITY_THRESHOLD);
+        this(DEFAULT_OLLAMA_URL, DEFAULT_MODEL, DEFAULT_TOP_K_BEFORE_RERANK, DEFAULT_TOP_K_AFTER_RERANK, DEFAULT_SIMILARITY_THRESHOLD);
     }
 
-    public EmbeddingSearchService(String ollamaUrl, String model, int topK, double similarityThreshold) {
+    public EmbeddingSearchService(String ollamaUrl, String model, int topKBeforeRerank, int topKAfterRerank, double similarityThreshold) {
         this.ollamaUrl = ollamaUrl;
         this.model = model;
-        this.topK = topK;
+        this.topKBeforeRerank = topKBeforeRerank;
+        this.topKAfterRerank = topKAfterRerank;
         this.similarityThreshold = similarityThreshold;
         this.httpClient = HttpClient.newHttpClient();
         this.objectMapper = new ObjectMapper();
@@ -93,36 +96,40 @@ public class EmbeddingSearchService {
         }
 
         try {
-            // Generate embedding for the query
+            // 2. Generate embedding for the rewritten query
             float[] queryEmbedding = generateEmbedding(query);
             if (queryEmbedding == null) {
                 log.error("Failed to generate query embedding");
                 return List.of();
             }
 
-            // Retrieve all embeddings and compute similarity
+            // 3. Retrieve all embeddings and compute similarity
             List<EmbeddingEntry> allEntries = embeddingRepository.findAllWithEmbeddings();
             
-            List<EmbeddingSearchResult> results = new ArrayList<>();
+            List<EmbeddingSearchResult> initialResults = new ArrayList<>();
             for (EmbeddingEntry entry : allEntries) {
                 double similarity = cosineSimilarity(queryEmbedding, entry.getEmbedding());
-                
-                if (similarity >= similarityThreshold) {
-                    results.add(new EmbeddingSearchResult(
-                            entry.getChunkId(),
-                            entry.getSource(),
-                            entry.getTitle(),
-                            entry.getSection(),
-                            entry.getContent(),
-                            similarity
-                    ));
-                }
+                initialResults.add(new EmbeddingSearchResult(
+                        entry.getChunkId(),
+                        entry.getSource(),
+                        entry.getTitle(),
+                        entry.getSection(),
+                        entry.getContent(),
+                        similarity
+                ));
             }
 
-            // Sort by similarity and return top K results
-            return results.stream()
+            // Sort by similarity and take topKBeforeRerank
+            List<EmbeddingSearchResult> topKBeforeRerankResults = initialResults.stream()
                     .sorted(Comparator.comparingDouble(EmbeddingSearchResult::getSimilarityScore).reversed())
-                    .limit(topK)
+                    .limit(topKBeforeRerank)
+                    .collect(Collectors.toList());
+
+            // 4. Apply Reranking/Filtering (using similarity threshold and topKAfterRerank)
+            return topKBeforeRerankResults.stream()
+                    .filter(result -> result.getSimilarityScore() >= similarityThreshold)
+                    .sorted(Comparator.comparingDouble(EmbeddingSearchResult::getSimilarityScore).reversed())
+                    .limit(topKAfterRerank)
                     .collect(Collectors.toList());
 
         } catch (SQLException e) {

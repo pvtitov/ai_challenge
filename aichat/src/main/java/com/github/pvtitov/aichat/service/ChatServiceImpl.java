@@ -17,6 +17,7 @@ import com.github.pvtitov.aichat.repository.WeatherLogRepository;
 import com.github.pvtitov.aichat.service.WeatherSchedulerService.WeatherSchedulerConfig;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -37,6 +38,8 @@ public class ChatServiceImpl implements ChatService {
     private final McpService mcpService; // New dependency
     private final WeatherSchedulerService weatherSchedulerService;
     private final EmbeddingSearchService embeddingSearchService;
+    @Value("${embedding.queryRewrite.enabled:false}")
+    private boolean queryRewriteEnabled;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private HistoryStrategy shortTermStrategy;
@@ -109,7 +112,14 @@ public class ChatServiceImpl implements ChatService {
         String embeddingContext = "";
         if ((knowledgeResult == null || knowledgeResult.startsWith("No knowledge") || knowledgeResult.startsWith("No tool") || knowledgeResult.startsWith("Error:"))
                 && embeddingSearchService.isReady()) {
-            List<EmbeddingSearchResult> searchResults = embeddingSearchService.search(userInput);
+            
+            String queryForEmbeddingSearch = userInput;
+            if (queryRewriteEnabled) {
+                queryForEmbeddingSearch = rewriteQueryWithLLM(userInput, currentProfile);
+                System.out.println("Original query: '" + userInput + "' rewritten to: '" + queryForEmbeddingSearch + "'");
+            }
+
+            List<EmbeddingSearchResult> searchResults = embeddingSearchService.search(queryForEmbeddingSearch);
             if (!searchResults.isEmpty()) {
                 embeddingContext = embeddingSearchService.formatResultsAsContext(searchResults);
                 System.out.println("Embedding search found " + searchResults.size() + " relevant chunk(s)");
@@ -543,6 +553,24 @@ public class ChatServiceImpl implements ChatService {
         List<ChatMessage> appliedHistory = strategy.apply(newHistory);
         deleteFunction.delete(branch, profileLogin);
         appliedHistory.forEach(saveFunction::save);
+    }
+
+    private String rewriteQueryWithLLM(String originalQuery, Profile currentProfile) throws IOException {
+        String rewritePrompt = "You are a query rewriter. Your goal is to rephrase or expand the user's query to improve its effectiveness for semantic search. " +
+                               "The rewritten query should be clear, concise, and capture the core intent of the original query, potentially adding relevant keywords or context. " +
+                               "Only return the rewritten query, nothing else.\n\n" +
+                               "Original query: \"" + originalQuery + "\"\n" +
+                               "Rewritten query:";
+        
+        JSONArray history = getHistoryAsJson(currentProfile); // Include history for better context
+        GigaChatComplexResponse rewriteResponse = gigaChatApiService.getCompletion(history, rewritePrompt);
+        String rewrittenQuery = rewriteResponse.getFullResponse().trim();
+
+        // Basic validation to ensure the LLM returned something reasonable
+        if (rewrittenQuery.isEmpty() || rewrittenQuery.length() < 5) { // Arbitrary length check
+            return originalQuery; // Fallback to original query
+        }
+        return rewrittenQuery;
     }
 
     private String handleCommand(String command, ChatState chatState) {
