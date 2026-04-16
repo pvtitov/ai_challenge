@@ -10,7 +10,7 @@ RUN_SERVERS_SCRIPT="./run_servers.sh"
 
 QUESTIONS=(
     "Tell me about C programming language and best way to learn it?"
-    "What is Diff's device?"
+    "What is Duff's device?"
     "What do you know about undefined behavior?"
     "How to handle an undefined behavior?"
 )
@@ -33,14 +33,14 @@ NC='\033[0m' # No Color
 
 # Function to update application.properties
 update_application_properties() {
-    local -A props_to_set
+    local prop_keys=()
+    local prop_values=()
     for prop_pair in "$@"; do
-        key=$(echo "$prop_pair" | cut -d'=' -f1)
-        value=$(echo "$prop_pair" | cut -d'=' -f2)
-        props_to_set["$key"]="$value"
+        prop_keys+=("$(echo "$prop_pair" | cut -d'=' -f1)")
+        prop_values+=("$(echo "$prop_pair" | cut -d'=' -f2)")
     done
 
-    echo -e "${YELLOW}Updating ${APP_PROPERTIES_PATH} with: ${props_to_set[*]}${NC}"
+    echo -e "${YELLOW}Updating ${APP_PROPERTIES_PATH} with: $@${NC}"
 
     # Read current properties
     local current_props
@@ -50,12 +50,10 @@ update_application_properties() {
         current_props=""
     fi
 
-    local new_props=""
-    local updated_keys=""
-
     # Update existing or add new properties
-    for key in "${!props_to_set[@]}"; do
-        value="${props_to_set[$key]}"
+    for i in "${!prop_keys[@]}"; do
+        key="${prop_keys[$i]}"
+        value="${prop_values[$i]}"
         if echo "$current_props" | grep -q "^${key}="; then
             # Replace existing line
             current_props=$(echo "$current_props" | sed "s|^${key}=.*|${key}=${value}|")
@@ -63,7 +61,6 @@ update_application_properties() {
             # Add new line
             current_props="${current_props}\n${key}=${value}"
         fi
-        updated_keys="${updated_keys} ${key}"
     done
     
     echo -e "$current_props" > "$APP_PROPERTIES_PATH"
@@ -75,9 +72,8 @@ start_all_servers() {
     # Ensure the script is executable
     chmod +x "$RUN_SERVERS_SCRIPT"
     
-    # Start run_servers.sh in the background
-    # Redirect stdout/stderr to files to prevent pipe issues and capture logs
-    "$RUN_SERVERS_SCRIPT" > run_servers_stdout.log 2> run_servers_stderr.log &
+    # Start run_servers.sh in the background in a subshell to create a new process group
+    ( "$RUN_SERVERS_SCRIPT" > run_servers_stdout.log 2> run_servers_stderr.log & )
     SERVERS_PID=$!
     echo "Servers PID: $SERVERS_PID"
 
@@ -123,8 +119,8 @@ send_question() {
         -H "Content-Type: application/json" \
         -d "{\"prompt\": \"$question\"}" \
         --max-time 120)
-    
-    local response_text=$(python3 -c "import json, sys; data=json.loads(sys.stdin.read()); print(data.get('response') or data.get('fullResponse') or data.get('plan') or str(data))" <<< "$raw_response")
+
+    local response_text=$(python3 -c "import json, sys; data=json.loads(sys.stdin.read()); print(data.get('response') or data.get('fullResponse') or data.get('plan') or str(data))" <<< "$(echo "$raw_response" | sed 's/{\"timestamp\":.*//')")
 
     if [ -z "$response_text" ]; then
         echo -e "${RED}  ✗ Failed to get response from AIChat.${NC}"
@@ -212,7 +208,7 @@ for scenario_entry in "${SCENARIOS[@]}"; do
         continue
     fi
     
-    sleep 10 # Give AIChat some extra time to fully initialize with new properties
+    sleep 20 # Give AIChat some extra time to fully initialize with new properties
 
     # Determine if query rewriting is enabled for this scenario
     REWRITE_ENABLED="false"
