@@ -1,5 +1,7 @@
 package com.github.pvtitov.aichat.dto;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 public class ChatResponse {
@@ -12,6 +14,11 @@ public class ChatResponse {
     private long cumulativeTokens;
     private ResponseType responseType = ResponseType.FINAL;
     private boolean requiresConfirmation = false;
+    
+    // RAG-specific fields: sources and citations
+    private List<CitationSource> sources = new ArrayList<>();
+    private List<String> citations = new ArrayList<>();
+    private boolean lowRelevance = false;
 
     public ChatResponse() {
     }
@@ -104,6 +111,66 @@ public class ChatResponse {
         this.requiresConfirmation = requiresConfirmation;
     }
 
+    // RAG-specific getters and setters
+    
+    public List<CitationSource> getSources() {
+        return sources;
+    }
+
+    public void setSources(List<CitationSource> sources) {
+        this.sources = sources;
+    }
+
+    public void addSource(CitationSource source) {
+        this.sources.add(source);
+    }
+
+    public List<String> getCitations() {
+        return citations;
+    }
+
+    public void setCitations(List<String> citations) {
+        this.citations = citations;
+    }
+
+    public void addCitation(String citation) {
+        this.citations.add(citation);
+    }
+
+    public boolean isLowRelevance() {
+        return lowRelevance;
+    }
+
+    public void setLowRelevance(boolean lowRelevance) {
+        this.lowRelevance = lowRelevance;
+    }
+
+    /**
+     * Formats sources and citations as a readable appendix to append to the response.
+     */
+    public String formatSourcesAndCitations() {
+        if (sources.isEmpty() && citations.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n\n---\n**Sources:**\n");
+        
+        for (int i = 0; i < sources.size(); i++) {
+            CitationSource source = sources.get(i);
+            sb.append(String.format("%d. %s\n", i + 1, source.formatCitation()));
+        }
+        
+        if (!citations.isEmpty()) {
+            sb.append("\n**Citations:**\n");
+            for (int i = 0; i < citations.size(); i++) {
+                sb.append(String.format("> %s\n", citations.get(i)));
+            }
+        }
+        
+        return sb.toString();
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -137,6 +204,9 @@ public class ChatResponse {
                 ", cumulativeTokens=" + cumulativeTokens +
                 ", responseType=" + responseType +
                 ", requiresConfirmation=" + requiresConfirmation +
+                ", sources=" + sources.size() +
+                ", citations=" + citations.size() +
+                ", lowRelevance=" + lowRelevance +
                 '}';
     }
 }

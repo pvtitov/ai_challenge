@@ -5,6 +5,7 @@ import com.github.pvtitov.aichat.dto.*;
 import com.github.pvtitov.aichat.dto.state.ChatState;
 import com.github.pvtitov.aichat.dto.state.ConversationState;
 import com.github.pvtitov.aichat.dto.state.Stage;
+import com.github.pvtitov.aichat.service.EmbeddingSearchService.SearchContext;
 import com.github.pvtitov.aichat.model.ChatMessage;
 import com.github.pvtitov.aichat.model.ChatMessage;
 import com.github.pvtitov.aichat.model.Invariant; // Added
@@ -110,19 +111,33 @@ public class ChatServiceImpl implements ChatService {
 
         // If knowledge MCP didn't find matches, try semantic search through embeddings
         String embeddingContext = "";
+        SearchContext searchContext = null;
+        List<EmbeddingSearchResult> searchResults = null;
+        
         if ((knowledgeResult == null || knowledgeResult.startsWith("No knowledge") || knowledgeResult.startsWith("No tool") || knowledgeResult.startsWith("Error:"))
                 && embeddingSearchService.isReady()) {
-            
+
             String queryForEmbeddingSearch = userInput;
             if (queryRewriteEnabled) {
                 queryForEmbeddingSearch = rewriteQueryWithLLM(userInput, currentProfile);
                 System.out.println("Original query: '" + userInput + "' rewritten to: '" + queryForEmbeddingSearch + "'");
             }
 
-            List<EmbeddingSearchResult> searchResults = embeddingSearchService.search(queryForEmbeddingSearch);
+            searchResults = embeddingSearchService.search(queryForEmbeddingSearch);
             if (!searchResults.isEmpty()) {
-                embeddingContext = embeddingSearchService.formatResultsAsContext(searchResults);
-                System.out.println("Embedding search found " + searchResults.size() + " relevant chunk(s)");
+                searchContext = embeddingSearchService.formatResultsAsContextWithCitations(searchResults);
+                embeddingContext = searchContext.getFormattedContext();
+                
+                // Store RAG metadata in conversation state
+                conversationState.setRagCitations(searchContext.getCitations());
+                conversationState.setMaxRelevanceScore(searchContext.getMaxRelevanceScore());
+                
+                // Check if relevance is below threshold (use 0.75 as low-relevance threshold)
+                double lowRelevanceThreshold = 0.75;
+                boolean isLowRelevance = searchContext.getMaxRelevanceScore() < lowRelevanceThreshold;
+                conversationState.setLowRelevanceContext(isLowRelevance);
+                
+                System.out.println("Embedding search found " + searchResults.size() + " relevant chunk(s), max similarity: " + String.format("%.3f", searchContext.getMaxRelevanceScore()) + (isLowRelevance ? " [LOW RELEVANCE]" : ""));
             }
         }
 
@@ -130,6 +145,8 @@ public class ChatServiceImpl implements ChatService {
 
         // If we have tool result, add it to the context
         String planPrompt;
+        boolean hasRagContext = !embeddingContext.isEmpty();
+        
         if (toolResult != null && !toolResult.startsWith("Error:") && !toolResult.startsWith("No tool")) {
             // User asked for something we can fulfill via MCP tools
             planPrompt = invariantPrefix +
@@ -143,11 +160,35 @@ public class ChatServiceImpl implements ChatService {
                 "You are a planning AI. Based on the user's request, the following knowledge has been retrieved:\n" +
                 knowledgeResult + "\n\n" +
                 "User's request: \"" + userInput + "\". Respond with the plan only.";
-        } else if (!embeddingContext.isEmpty()) {
-            // User asked something that matched embeddings semantically
+        } else if (hasRagContext) {
+            // User asked something that matched embeddings semantically - use enhanced prompt with citation requirements
+            String citationInstruction = "";
+            if (conversationState.isLowRelevanceContext()) {
+                // Low relevance: instruct LLM to say "I don't know" and ask for clarification
+                citationInstruction = "\n\nIMPORTANT: The retrieved information has low relevance to the user's request. " +
+                    "You MUST start your response by stating that you don't have sufficient information to provide a confident answer, " +
+                    "and ask the user to clarify or rephrase their question. " +
+                    "If you can provide any partial information, do so cautiously and clearly indicate uncertainty.";
+            } else {
+                // Good relevance: instruct LLM to use sources and citations
+                citationInstruction = "\n\nIMPORTANT: You MUST structure your response as follows:\n" +
+                    "1. Provide a clear, direct answer to the user's request\n" +
+                    "2. At the end of your response, add a '---' separator\n" +
+                    "3. List all sources you used with their section names and chunk IDs\n" +
+                    "4. Include relevant quotes (citations) from the retrieved knowledge to support your answer\n" +
+                    "Format:\n" +
+                    "---\n" +
+                    "**Sources:**\n" +
+                    "1. [Source title > Section name, relevance score]\n" +
+                    "2. [Source title > Section name, relevance score]\n" +
+                    "\n**Citations:**\n" +
+                    "> \"exact quote from source\"\n" +
+                    "> \"another quote from source\"";
+            }
+            
             planPrompt = invariantPrefix +
                 "You are a planning AI. Based on the user's request, the following relevant knowledge has been retrieved from saved documents:\n" +
-                embeddingContext + "\n\n" +
+                embeddingContext + citationInstruction + "\n\n" +
                 "User's request: \"" + userInput + "\". Respond with the plan only.";
         } else {
             String planPromptBase = invariantPrefix + "You are a planning AI. Based on the user's request, create a step-by-step plan. The user's request is: \"" + userInput + "\". Respond with the plan only.";
@@ -162,6 +203,16 @@ public class ChatServiceImpl implements ChatService {
         ChatResponse response = new ChatResponse(plan);
         response.setResponseType(ResponseType.PLAN);
         response.setRequiresConfirmation(true);
+        
+        // Attach RAG metadata to response (for display in handleActionApproval)
+        if (searchContext != null && searchContext.hasResults()) {
+            response.setSources(searchContext.getCitations());
+            response.setCitations(searchContext.getCitations().stream()
+                .map(CitationSource::getQuote)
+                .collect(java.util.stream.Collectors.toList()));
+            response.setLowRelevance(conversationState.isLowRelevanceContext());
+        }
+        
         return response;
     }
 
@@ -430,6 +481,16 @@ public class ChatServiceImpl implements ChatService {
         } else {
             actionPrompt = invariantPrefix + "You are an executing AI. Carry out the following plan: \"" + plan + "\". The original user request was: \"" + conversationState.getOriginalPrompt() + "\".";
         }
+        
+        // Add citation instructions if RAG context was used
+        if (!conversationState.getRagCitations().isEmpty()) {
+            if (conversationState.isLowRelevanceContext()) {
+                actionPrompt += "\n\nIMPORTANT: The retrieved information has low relevance. You MUST clearly state that you don't have sufficient information and ask for clarification.";
+            } else {
+                actionPrompt += "\n\nIMPORTANT: You MUST include sources and citations (quotes from the retrieved knowledge) at the end of your response using the format:\n" +
+                    "---\n**Sources:**\n1. [Source > Section, relevance]\n\n**Citations:**\n> \"quote\"";
+            }
+        }
 
         // Include history in the action prompt
         JSONArray history = getHistoryAsJson(currentProfile);
@@ -444,6 +505,16 @@ public class ChatServiceImpl implements ChatService {
         ChatResponse response = new ChatResponse(actionResult);
         response.setResponseType(ResponseType.ACTION_RESULT);
         response.setRequiresConfirmation(true);
+        
+        // Preserve RAG metadata
+        if (!conversationState.getRagCitations().isEmpty()) {
+            response.setSources(conversationState.getRagCitations());
+            response.setCitations(conversationState.getRagCitations().stream()
+                .map(CitationSource::getQuote)
+                .collect(java.util.stream.Collectors.toList()));
+            response.setLowRelevance(conversationState.isLowRelevanceContext());
+        }
+        
         return response;
     }
 
@@ -496,11 +567,26 @@ public class ChatServiceImpl implements ChatService {
 
             long cumulativeTokens = chatHistoryRepository.getCumulativeTokens(currentProfile.getCurrentBranch(), currentProfile.getLogin());
 
-            // Reset for the next interaction
-            conversationState.reset();
+            // Build final response with citations if available
+            String finalResponse = verificationResult + knowledgeSuffix;
+            if (!conversationState.getRagCitations().isEmpty()) {
+                finalResponse += "\n\n---\n\n**Sources:**\n";
+                for (int i = 0; i < conversationState.getRagCitations().size(); i++) {
+                    CitationSource citation = conversationState.getRagCitations().get(i);
+                    finalResponse += String.format("%d. %s\n", i + 1, citation.formatCitation());
+                }
+                finalResponse += "\n**Citations:**\n";
+                for (CitationSource citation : conversationState.getRagCitations()) {
+                    finalResponse += String.format("> \"%s\"\n", citation.getQuote());
+                }
+            }
+            if (!knowledgeList.isEmpty()) {
+                finalResponse += "\n\n---\n\n" + knowledgeList;
+            }
 
-            return new ChatResponse(
-                verificationResult + knowledgeSuffix + "\n\n---\n\n" + knowledgeList,
+            // Create response with RAG metadata
+            ChatResponse response = new ChatResponse(
+                finalResponse,
                 verificationResponse.getSummary(),
                 verificationResponse.getStickyFacts(),
                 verificationResponse.getPromptTokens(),
@@ -508,6 +594,21 @@ public class ChatServiceImpl implements ChatService {
                 verificationResponse.getTotalTokens(),
                 cumulativeTokens
             );
+            response.setResponseType(ResponseType.FINAL);
+            
+            // Preserve RAG metadata
+            if (!conversationState.getRagCitations().isEmpty()) {
+                response.setSources(conversationState.getRagCitations());
+                response.setCitations(conversationState.getRagCitations().stream()
+                    .map(CitationSource::getQuote)
+                    .collect(java.util.stream.Collectors.toList()));
+                response.setLowRelevance(conversationState.isLowRelevanceContext());
+            }
+            
+            // Reset for the next interaction
+            conversationState.reset();
+
+            return response;
         }
     }
 

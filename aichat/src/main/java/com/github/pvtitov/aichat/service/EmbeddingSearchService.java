@@ -2,6 +2,7 @@ package com.github.pvtitov.aichat.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.pvtitov.aichat.dto.CitationSource;
 import com.github.pvtitov.aichat.dto.EmbeddingSearchResult;
 import com.github.pvtitov.aichat.repository.EmbeddingRepository;
 import com.github.pvtitov.aichat.repository.EmbeddingRepository.EmbeddingEntry;
@@ -143,7 +144,7 @@ public class EmbeddingSearchService {
 
     /**
      * Generates a formatted context string from search results for inclusion in LLM prompts.
-     * 
+     *
      * @param results the search results
      * @return formatted string with relevant knowledge chunks
      */
@@ -154,7 +155,7 @@ public class EmbeddingSearchService {
 
         StringBuilder sb = new StringBuilder();
         sb.append("\n\n=== Relevant Knowledge Retrieved ===\n");
-        
+
         for (int i = 0; i < results.size(); i++) {
             EmbeddingSearchResult result = results.get(i);
             sb.append(String.format("\n[Result %d] (similarity: %.3f)\n", i + 1, result.getSimilarityScore()));
@@ -164,9 +165,89 @@ public class EmbeddingSearchService {
             }
             sb.append(String.format("Content:\n%s\n", result.getContent()));
         }
-        
+
         sb.append("\n=== End of Retrieved Knowledge ===\n");
         return sb.toString();
+    }
+
+    /**
+     * Wrapper class holding both formatted context and structured citation sources.
+     */
+    public static class SearchContext {
+        private final String formattedContext;
+        private final List<CitationSource> citations;
+        private final double maxRelevanceScore;
+
+        public SearchContext(String formattedContext, List<CitationSource> citations, double maxRelevanceScore) {
+            this.formattedContext = formattedContext;
+            this.citations = citations;
+            this.maxRelevanceScore = maxRelevanceScore;
+        }
+
+        public String getFormattedContext() {
+            return formattedContext;
+        }
+
+        public List<CitationSource> getCitations() {
+            return citations;
+        }
+
+        public double getMaxRelevanceScore() {
+            return maxRelevanceScore;
+        }
+
+        public boolean hasResults() {
+            return !citations.isEmpty();
+        }
+    }
+
+    /**
+     * Generates both formatted context and structured citation sources from search results.
+     *
+     * @param results the search results
+     * @return SearchContext containing formatted text and structured citations
+     */
+    public SearchContext formatResultsAsContextWithCitations(List<EmbeddingSearchResult> results) {
+        if (results == null || results.isEmpty()) {
+            return new SearchContext("", List.of(), 0.0);
+        }
+
+        StringBuilder contextSb = new StringBuilder();
+        contextSb.append("\n\n=== Relevant Knowledge Retrieved ===\n");
+
+        List<CitationSource> citations = new ArrayList<>();
+        double maxScore = 0.0;
+
+        for (int i = 0; i < results.size(); i++) {
+            EmbeddingSearchResult result = results.get(i);
+            contextSb.append(String.format("\n[Result %d] (similarity: %.3f)\n", i + 1, result.getSimilarityScore()));
+            contextSb.append(String.format("Source: %s\n", result.getTitle()));
+            if (result.getSection() != null && !result.getSection().isEmpty()) {
+                contextSb.append(String.format("Section: %s\n", result.getSection()));
+            }
+            contextSb.append(String.format("Content:\n%s\n", result.getContent()));
+
+            // Extract a quote (first 200 chars or full content if shorter)
+            String quote = result.getContent().length() > 200 
+                ? result.getContent().substring(0, 200) + "..." 
+                : result.getContent();
+            
+            CitationSource citation = new CitationSource(
+                result.getChunkId(),
+                result.getSource(),
+                result.getTitle(),
+                result.getSection(),
+                quote,
+                result.getSimilarityScore()
+            );
+            citations.add(citation);
+            
+            maxScore = Math.max(maxScore, result.getSimilarityScore());
+        }
+
+        contextSb.append("\n=== End of Retrieved Knowledge ===\n");
+        
+        return new SearchContext(contextSb.toString(), citations, maxScore);
     }
 
     /**
