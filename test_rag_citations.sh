@@ -43,48 +43,43 @@ cleanup() {
 
 trap cleanup EXIT
 
-# Send a question and complete the full 3-stage conversation flow
-# Stage 1: Send question -> get PLAN response
-# Stage 2: Send "y" -> get ACTION_RESULT
-# Stage 3: Send "y" -> get FINAL response with sources/citations
+# Send a question in one-shot mode to get the complete response with sources/citations
 send_question() {
     local question="$1"
     local output_file="$2"
     local stage_file="$3"
-    local cookie_jar="$TMP_DIR/cookies_question.txt"
 
     echo "  Question: $question"
+    echo "  → Sending one-shot request..."
 
-    # Stage 1: Send question
-    echo "  → Stage 1: Getting plan..."
-    local raw_file="$TMP_DIR/raw_stage1.json"
+    local raw_file="$TMP_DIR/raw_response.json"
     curl -s -X POST "$AICHAT_URL/chat" \
         -H "Content-Type: application/json" \
-        -d "{\"prompt\": \"$question\"}" \
-        --max-time 180 \
-        -c "$cookie_jar" \
+        -d "{\"prompt\": \"$question\", \"oneShot\": true}" \
+        --max-time 300 \
         -o "$raw_file" 2>/dev/null || true
 
     # Check if file has content
     if [ ! -s "$raw_file" ]; then
-        echo "  ✗ Stage 1 response is empty"
+        echo "  ✗ Response is empty"
         echo "[Failed to get response]" > "$output_file"
         echo "low_relevance=false" > "$stage_file"
         echo "response_type=ERROR" >> "$stage_file"
         return
     fi
 
-    # Parse Stage 1 response using Python
-    python3 - "$raw_file" << 'PYEOF' > "$TMP_DIR/stage1_parsed.json" 2>/dev/null
+    # Parse response using Python
+    python3 - "$raw_file" > "$TMP_DIR/parsed_response.json" 2>/dev/null << 'PYEOF'
 import json, sys
 
 raw_file = sys.argv[1]
 with open(raw_file, 'r') as f:
     raw = f.read()
 
-# Find the first complete JSON object
+# Find the last complete JSON object (one-shot returns the final response)
 depth = 0
 start = None
+last_complete = None
 for i, c in enumerate(raw):
     if c == '{':
         if depth == 0:
@@ -93,17 +88,19 @@ for i, c in enumerate(raw):
     elif c == '}':
         depth -= 1
         if depth == 0 and start is not None:
-            data = json.loads(raw[start:i+1])
-            print(json.dumps(data))
-            sys.exit(0)
+            last_complete = raw[start:i+1]
 
-sys.exit(1)
+if last_complete:
+    print(last_complete)
+    sys.exit(0)
+else:
+    sys.exit(1)
 PYEOF
 
-    if [ ! -s "$TMP_DIR/stage1_parsed.json" ]; then
-        echo "  ✗ Failed to parse Stage 1 response"
-        echo "  Raw content (first 200 chars):"
-        head -c 200 "$raw_file"
+    if [ ! -s "$TMP_DIR/parsed_response.json" ]; then
+        echo "  ✗ Failed to parse response"
+        echo "  Raw content (first 300 chars):"
+        head -c 300 "$raw_file"
         echo ""
         echo "[Failed to parse response]" > "$output_file"
         echo "low_relevance=false" > "$stage_file"
@@ -113,18 +110,11 @@ PYEOF
 
     rm -f "$raw_file"
 
-    local requires_confirmation
-    requires_confirmation=$(python3 -c "
-import json
-with open('$TMP_DIR/stage1_parsed.json') as f:
-    d = json.load(f)
-print(str(d.get('requiresConfirmation', False)).lower())
-" 2>/dev/null || echo "false")
-
+    # Extract metadata
     local response_type
     response_type=$(python3 -c "
 import json
-with open('$TMP_DIR/stage1_parsed.json') as f:
+with open('$TMP_DIR/parsed_response.json') as f:
     d = json.load(f)
 print(d.get('responseType', 'FINAL'))
 " 2>/dev/null || echo "FINAL")
@@ -132,156 +122,33 @@ print(d.get('responseType', 'FINAL'))
     local low_relevance
     low_relevance=$(python3 -c "
 import json
-with open('$TMP_DIR/stage1_parsed.json') as f:
+with open('$TMP_DIR/parsed_response.json') as f:
     d = json.load(f)
 print(str(d.get('lowRelevance', False)).lower())
 " 2>/dev/null || echo "false")
 
-    echo "  → Stage 1 complete (responseType: $response_type, requiresConfirmation: $requires_confirmation, lowRelevance: $low_relevance)"
-
-    # Stage 2: Approve plan (send "y")
-    if [ "$requires_confirmation" = "true" ]; then
-        echo "  → Stage 2: Approving plan..."
-        local raw_file2="$TMP_DIR/raw_stage2.json"
-        curl -s -X POST "$AICHAT_URL/chat" \
-            -H "Content-Type: application/json" \
-            -d '{"prompt": "y"}' \
-            --max-time 180 \
-            -b "$cookie_jar" -c "$cookie_jar" \
-            -o "$raw_file2" 2>/dev/null || true
-
-        # Check if file has content
-        if [ ! -s "$raw_file2" ]; then
-            echo "  ✗ Stage 2 response is empty"
-            echo "[Failed to get response]" > "$output_file"
-            echo "low_relevance=$low_relevance" > "$stage_file"
-            echo "response_type=ERROR" >> "$stage_file"
-            return
-        fi
-
-        # Parse Stage 2 response
-        python3 - "$raw_file2" << 'PYEOF' > "$TMP_DIR/stage2_parsed.json" 2>/dev/null
-import json, sys
-
-raw_file = sys.argv[1]
-with open(raw_file, 'r') as f:
-    raw = f.read()
-
-depth = 0
-start = None
-for i, c in enumerate(raw):
-    if c == '{':
-        if depth == 0:
-            start = i
-        depth += 1
-    elif c == '}':
-        depth -= 1
-        if depth == 0 and start is not None:
-            data = json.loads(raw[start:i+1])
-            print(json.dumps(data))
-            sys.exit(0)
-
-sys.exit(1)
-PYEOF
-
-        if [ ! -s "$TMP_DIR/stage2_parsed.json" ]; then
-            echo "  ✗ Failed to parse Stage 2 response"
-            echo "  Raw content (first 200 chars):"
-            head -c 200 "$raw_file2"
-            echo ""
-            echo "[Failed to parse response]" > "$output_file"
-            echo "low_relevance=$low_relevance" > "$stage_file"
-            echo "response_type=ERROR" >> "$stage_file"
-            return
-        fi
-
-        rm -f "$raw_file2"
-
-        requires_confirmation=$(python3 -c "
+    local sources_count
+    sources_count=$(python3 -c "
 import json
-with open('$TMP_DIR/stage2_parsed.json') as f:
+with open('$TMP_DIR/parsed_response.json') as f:
     d = json.load(f)
-print(str(d.get('requiresConfirmation', False)).lower())
-" 2>/dev/null || echo "false")
+sources = d.get('sources', [])
+print(len(sources) if sources else 0)
+" 2>/dev/null || echo "0")
 
-        response_type=$(python3 -c "
+    local citations_count
+    citations_count=$(python3 -c "
 import json
-with open('$TMP_DIR/stage2_parsed.json') as f:
+with open('$TMP_DIR/parsed_response.json') as f:
     d = json.load(f)
-print(d.get('responseType', 'FINAL'))
-" 2>/dev/null || echo "FINAL")
+citations = d.get('citations', [])
+print(len(citations) if citations else 0)
+" 2>/dev/null || echo "0")
 
-        echo "  → Stage 2 complete (responseType: $response_type, requiresConfirmation: $requires_confirmation)"
+    echo "  → Response complete (responseType: $response_type, sources: $sources_count, citations: $citations_count, lowRelevance: $low_relevance)"
 
-        # Stage 3: Approve action (send "y")
-        if [ "$requires_confirmation" = "true" ]; then
-            echo "  → Stage 3: Approving action..."
-            local raw_file3="$TMP_DIR/raw_stage3.json"
-            curl -s -X POST "$AICHAT_URL/chat" \
-                -H "Content-Type: application/json" \
-                -d '{"prompt": "y"}' \
-                --max-time 180 \
-                -b "$cookie_jar" -c "$cookie_jar" \
-                -o "$raw_file3" 2>/dev/null || true
-
-            # Check if file has content
-            if [ ! -s "$raw_file3" ]; then
-                echo "  ✗ Stage 3 response is empty"
-                echo "[Failed to get response]" > "$output_file"
-                echo "low_relevance=$low_relevance" > "$stage_file"
-                echo "response_type=ERROR" >> "$stage_file"
-                return
-            fi
-
-            # Parse Stage 3 response
-            python3 - "$raw_file3" << 'PYEOF' > "$TMP_DIR/stage3_parsed.json" 2>/dev/null
-import json, sys
-
-raw_file = sys.argv[1]
-with open(raw_file, 'r') as f:
-    raw = f.read()
-
-depth = 0
-start = None
-for i, c in enumerate(raw):
-    if c == '{':
-        if depth == 0:
-            start = i
-        depth += 1
-    elif c == '}':
-        depth -= 1
-        if depth == 0 and start is not None:
-            data = json.loads(raw[start:i+1])
-            print(json.dumps(data))
-            sys.exit(0)
-
-sys.exit(1)
-PYEOF
-
-            if [ ! -s "$TMP_DIR/stage3_parsed.json" ]; then
-                echo "  ✗ Failed to parse Stage 3 response"
-                echo "  Raw content (first 200 chars):"
-                head -c 200 "$raw_file3"
-                echo ""
-                echo "[Failed to parse response]" > "$output_file"
-                echo "low_relevance=$low_relevance" > "$stage_file"
-                echo "response_type=ERROR" >> "$stage_file"
-                return
-            fi
-
-            rm -f "$raw_file3"
-
-            response_type=$(python3 -c "
-import json
-with open('$TMP_DIR/stage3_parsed.json') as f:
-    d = json.load(f)
-print(d.get('responseType', 'FINAL'))
-" 2>/dev/null || echo "FINAL")
-
-            echo "  → Stage 3 complete (responseType: $response_type)"
-
-            # Extract final response text with sources/citations appended
-            python3 - "$TMP_DIR/stage3_parsed.json" > "$output_file" << 'PYEOF'
+    # Extract final response text
+    python3 - "$TMP_DIR/parsed_response.json" > "$output_file" << 'PYEOF'
 import json, sys
 
 parsed_file = sys.argv[1]
@@ -290,41 +157,9 @@ with open(parsed_file) as f:
 text = d.get('fullResponse') or d.get('response') or d.get('plan') or str(d)
 print(text)
 PYEOF
-        else
-            # Stage 2 didn't require confirmation, use Stage 2 response
-            echo "  → Stage 2 didn't require confirmation, using Stage 2 response"
-            python3 - "$TMP_DIR/stage2_parsed.json" > "$output_file" << 'PYEOF'
-import json, sys
 
-parsed_file = sys.argv[1]
-with open(parsed_file) as f:
-    d = json.load(f)
-text = d.get('fullResponse') or d.get('response') or d.get('plan') or str(d)
-print(text)
-PYEOF
-        fi
-    else
-        # Stage 1 didn't require confirmation, use Stage 1 response
-        echo "  → Stage 1 didn't require confirmation, using Stage 1 response"
-        python3 - "$TMP_DIR/stage1_parsed.json" > "$output_file" << 'PYEOF'
-import json, sys
-
-parsed_file = sys.argv[1]
-with open(parsed_file) as f:
-    d = json.load(f)
-text = d.get('fullResponse') or d.get('response') or d.get('plan') or str(d)
-print(text)
-PYEOF
-    fi
-
-    # Clean up parsed files
-    rm -f "$TMP_DIR/stage1_parsed.json" "$TMP_DIR/stage2_parsed.json" "$TMP_DIR/stage3_parsed.json"
-
-    # Save stage info for analysis
-    echo "low_relevance=$low_relevance" > "$stage_file"
-    echo "response_type=$response_type" >> "$stage_file"
-
-    rm -f "$cookie_jar"
+    # Clean up
+    rm -f "$TMP_DIR/parsed_response.json"
 
     if [ -f "$output_file" ] && [ -s "$output_file" ]; then
         local bytes=$(wc -c < "$output_file" | tr -d ' ')
@@ -333,6 +168,10 @@ PYEOF
         echo "  ✗ Failed to save response"
         echo "[Failed to get response]" > "$output_file"
     fi
+
+    # Save stage info for analysis
+    echo "low_relevance=$low_relevance" > "$stage_file"
+    echo "response_type=$response_type" >> "$stage_file"
     echo ""
 }
 

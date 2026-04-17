@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.support.SessionStatus;
 
 import java.io.IOException;
 import java.util.List;
@@ -38,8 +39,18 @@ public class ChatController {
 
     @PostMapping("/chat")
     public ResponseEntity<ChatResponse> chat(@RequestBody ChatRequest request,
-                                             @ModelAttribute("chatState") ChatState chatState) {
+                                             @ModelAttribute("chatState") ChatState chatState,
+                                             SessionStatus sessionStatus) {
         try {
+            // For oneShot mode, create a fresh state and complete session immediately
+            if (request.isOneShot()) {
+                ChatState freshState = new ChatState();
+                ChatResponse response = chatService.process(request, freshState);
+                // Mark session as complete to prevent session storage
+                sessionStatus.setComplete();
+                return ResponseEntity.ok(response);
+            }
+            
             ChatResponse response = chatService.process(request, chatState);
             return ResponseEntity.ok(response);
         } catch (IOException e) {

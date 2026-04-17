@@ -91,6 +91,11 @@ public class ChatServiceImpl implements ChatService {
             return new ChatResponse(handleCommand(userInput, chatState));
         }
 
+        // One-shot mode: auto-complete all stages in a single request
+        if (request.isOneShot() && conversationState.getStage() == Stage.AWAITING_PROMPT) {
+            return processOneShot(userInput, conversationState, currentProfile);
+        }
+
         switch (conversationState.getStage()) {
             case AWAITING_PLAN_APPROVAL:
                 return handlePlanApproval(userInput, conversationState, currentProfile);
@@ -100,6 +105,29 @@ public class ChatServiceImpl implements ChatService {
             default:
                 return handleAwaitingPrompt(userInput, conversationState, currentProfile);
         }
+    }
+
+    /**
+     * Process the request in one-shot mode: auto-generate plan, execute it, and return final answer with citations.
+     */
+    private ChatResponse processOneShot(String userInput, ConversationState conversationState, Profile currentProfile) throws IOException {
+        // Stage 1: Generate plan with RAG context
+        ChatResponse planResponse = handleAwaitingPrompt(userInput, conversationState, currentProfile);
+        String plan = planResponse.getFullResponse();
+
+        System.out.println("[OneShot] Plan generated, auto-approving and executing...");
+
+        // Stage 2: Execute the plan (auto-approve with "y")
+        ChatResponse actionResult = handlePlanApproval("y", conversationState, currentProfile);
+
+        System.out.println("[OneShot] Action result generated, auto-approving final response...");
+
+        // Stage 3: Generate final response (auto-approve with "y")
+        ChatResponse finalResponse = handleActionApproval("y", conversationState, currentProfile);
+
+        System.out.println("[OneShot] Final response generated with citations.");
+
+        return finalResponse;
     }
 
     private ChatResponse handleAwaitingPrompt(String userInput, ConversationState conversationState, Profile currentProfile) throws IOException {
@@ -132,8 +160,8 @@ public class ChatServiceImpl implements ChatService {
                 conversationState.setRagCitations(searchContext.getCitations());
                 conversationState.setMaxRelevanceScore(searchContext.getMaxRelevanceScore());
                 
-                // Check if relevance is below threshold (use 0.75 as low-relevance threshold)
-                double lowRelevanceThreshold = 0.75;
+                // Check if relevance is below threshold (use 0.6 as low-relevance threshold)
+                double lowRelevanceThreshold = 0.6;
                 boolean isLowRelevance = searchContext.getMaxRelevanceScore() < lowRelevanceThreshold;
                 conversationState.setLowRelevanceContext(isLowRelevance);
                 
