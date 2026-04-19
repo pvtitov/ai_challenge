@@ -19,15 +19,12 @@ public final class DatabaseConstants {
         "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP" +
         ")";
     
-    public static final String CREATE_TASKS_TABLE = 
+    public static final String CREATE_TASKS_TABLE =
         "CREATE TABLE IF NOT EXISTS tasks (" +
         "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-        "dialog_message_id INTEGER, " +
         "title TEXT NOT NULL, " +
         "requirements TEXT, " +
-        "invariants TEXT, " +
-        "verified BOOLEAN DEFAULT 1, " +
-        "verification_summary TEXT, " +
-        "FOREIGN KEY (dialog_message_id) REFERENCES dialog_history(id)" +
+        "is_completed BOOLEAN DEFAULT 0, " +
+        "reason TEXT" +
         ")";
 }

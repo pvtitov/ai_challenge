@@ -35,13 +35,13 @@ public class GigaChatApiService {
     public GigaChatResponse callChatApi(List<ChatMessage> messages, String systemPrompt) {
         try {
             JSONArray requestMessages = new JSONArray();
-            
+
             // Add system prompt
             JSONObject systemMsg = new JSONObject();
             systemMsg.put("role", "system");
             systemMsg.put("content", systemPrompt);
             requestMessages.put(systemMsg);
-            
+
             // Add conversation history
             for (ChatMessage msg : messages) {
                 JSONObject jsonMsg = new JSONObject();
@@ -49,14 +49,13 @@ public class GigaChatApiService {
                 jsonMsg.put("content", msg.getContent());
                 requestMessages.put(jsonMsg);
             }
-            
+
             JSONObject requestBody = new JSONObject();
             requestBody.put("model", "GigaChat:latest");
             requestBody.put("temperature", 0.7);
             requestBody.put("n", 1);
-            requestBody.put("max_tokens", 2048);
             requestBody.put("messages", requestMessages);
-            
+
             RequestBody body = RequestBody.create(requestBody.toString(), MediaType.parse("application/json"));
             Request request = new Request.Builder()
                     .url(ApiConstants.GIGA_CHAT_API_URL)
@@ -64,20 +63,120 @@ public class GigaChatApiService {
                     .addHeader("Content-Type", "application/json")
                     .addHeader("Authorization", "Bearer " + getAccessToken())
                     .build();
-            
+
             try (Response response = httpClient.newCall(request).execute()) {
                 if (!response.isSuccessful()) {
                     throw new IOException("GigaChat API request failed: " + response.code());
                 }
-                
+
                 String responseBody = response.body().string();
                 logger.debug("GigaChat response: {}", responseBody);
-                
+
                 return parseResponse(responseBody);
             }
         } catch (IOException | JSONException e) {
             logger.error("Failed to call GigaChat API", e);
             throw new RuntimeException("Failed to call GigaChat API", e);
+        }
+    }
+
+    /**
+     * Call GigaChat API for task decision (1st request).
+     * Determines task changes and requirement additions.
+     */
+    public GigaChatResponse callTaskDecisionApi(String systemPrompt, List<ChatMessage> messages) {
+        try {
+            JSONArray requestMessages = new JSONArray();
+
+            JSONObject systemMsg = new JSONObject();
+            systemMsg.put("role", "system");
+            systemMsg.put("content", systemPrompt);
+            requestMessages.put(systemMsg);
+
+            for (ChatMessage msg : messages) {
+                JSONObject jsonMsg = new JSONObject();
+                jsonMsg.put("role", msg.getRole());
+                jsonMsg.put("content", msg.getContent());
+                requestMessages.put(jsonMsg);
+            }
+
+            JSONObject requestBody = new JSONObject();
+            requestBody.put("model", "GigaChat:latest");
+            requestBody.put("temperature", 0.7);
+            requestBody.put("n", 1);
+            requestBody.put("messages", requestMessages);
+
+            RequestBody body = RequestBody.create(requestBody.toString(), MediaType.parse("application/json"));
+            Request request = new Request.Builder()
+                    .url(ApiConstants.GIGA_CHAT_API_URL)
+                    .post(body)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Authorization", "Bearer " + getAccessToken())
+                    .build();
+
+            try (Response response = httpClient.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    throw new IOException("GigaChat API request failed: " + response.code());
+                }
+
+                String responseBody = response.body().string();
+                logger.debug("Task decision response: {}", responseBody);
+
+                return parseResponse(responseBody);
+            }
+        } catch (IOException | JSONException e) {
+            logger.error("Failed to call GigaChat API for task decision", e);
+            throw new RuntimeException("Failed to call GigaChat API for task decision", e);
+        }
+    }
+
+    /**
+     * Call GigaChat API for task completion status (3rd request).
+     * Evaluates whether the task is completed.
+     */
+    public GigaChatResponse callTaskCompletionApi(String systemPrompt, List<ChatMessage> messages) {
+        try {
+            JSONArray requestMessages = new JSONArray();
+
+            JSONObject systemMsg = new JSONObject();
+            systemMsg.put("role", "system");
+            systemMsg.put("content", systemPrompt);
+            requestMessages.put(systemMsg);
+
+            for (ChatMessage msg : messages) {
+                JSONObject jsonMsg = new JSONObject();
+                jsonMsg.put("role", msg.getRole());
+                jsonMsg.put("content", msg.getContent());
+                requestMessages.put(jsonMsg);
+            }
+
+            JSONObject requestBody = new JSONObject();
+            requestBody.put("model", "GigaChat:latest");
+            requestBody.put("temperature", 0.7);
+            requestBody.put("n", 1);
+            requestBody.put("messages", requestMessages);
+
+            RequestBody body = RequestBody.create(requestBody.toString(), MediaType.parse("application/json"));
+            Request request = new Request.Builder()
+                    .url(ApiConstants.GIGA_CHAT_API_URL)
+                    .post(body)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Authorization", "Bearer " + getAccessToken())
+                    .build();
+
+            try (Response response = httpClient.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    throw new IOException("GigaChat API request failed: " + response.code());
+                }
+
+                String responseBody = response.body().string();
+                logger.debug("Task completion response: {}", responseBody);
+
+                return parseResponse(responseBody);
+            }
+        } catch (IOException | JSONException e) {
+            logger.error("Failed to call GigaChat API for task completion", e);
+            throw new RuntimeException("Failed to call GigaChat API for task completion", e);
         }
     }
     

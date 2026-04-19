@@ -1,11 +1,9 @@
 package com.github.pvtitov.aichatlite;
 
-import com.github.pvtitov.aichatlite.dto.EmbeddingSearchResult;
 import com.github.pvtitov.aichatlite.dto.LlmStructuredResponse;
 import com.github.pvtitov.aichatlite.service.ChatService;
 import com.github.pvtitov.aichatlite.service.ChatServiceImpl;
 
-import java.util.List;
 import java.util.Scanner;
 
 public class AichatLiteApplication {
@@ -46,37 +44,11 @@ public class AichatLiteApplication {
                 }
                 
                 try {
-                    System.out.println("\nAI is thinking...");
                     LlmStructuredResponse response = chatService.processMessage(userInput);
 
                     // Print warning if JSON parsing failed
                     if (response.isJsonParseFailed()) {
-                        System.out.println("\n[Warning: Failed to parse structured response. Showing raw response.]");
-                    }
-
-                    // Print response
-                    System.out.println("\nAI: " + response.getResponse());
-
-                    // Print token usage
-                    if (response.getTokens() != null) {
-                        System.out.println("\n[Tokens - Input: " + response.getTokens().getInput() +
-                                         ", Output: " + response.getTokens().getOutput() +
-                                         ", Total: " + response.getTokens().getTotal() + "]");
-                    }
-
-                    // Print RAG sources
-                    if (response.getRagSources() != null && !response.getRagSources().isEmpty()) {
-                        List<String> uniqueSources = response.getRagSources().stream()
-                                .map(EmbeddingSearchResult::getSource)
-                                .filter(s -> s != null && !s.isEmpty())
-                                .distinct()
-                                .toList();
-                        if (!uniqueSources.isEmpty()) {
-                            System.out.println("\nInformation sources:");
-                            for (String source : uniqueSources) {
-                                System.out.println("- " + source);
-                            }
-                        }
+                        System.out.println("\n[Warning: Failed to parse structured response.]");
                     }
 
                     System.out.println(); // Empty line for readability
