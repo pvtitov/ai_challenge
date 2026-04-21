@@ -23,14 +23,14 @@ public class ChatServiceImpl implements ChatService {
 
     private static final Logger logger = LoggerFactory.getLogger(ChatServiceImpl.class);
 
-    private final GigaChatApiService gigaChatApiService;
+    private final LlmServiceRegistry llmServiceRegistry;
     private final EmbeddingSearchService embeddingSearchService;
     private final DialogHistoryRepository dialogHistoryRepository;
     private final TaskRepository taskRepository;
     private final ObjectMapper objectMapper;
 
     public ChatServiceImpl() {
-        this.gigaChatApiService = new GigaChatApiService();
+        this.llmServiceRegistry = new LlmServiceRegistry();
         this.embeddingSearchService = new EmbeddingSearchService();
         this.dialogHistoryRepository = new DialogHistoryRepository();
         this.taskRepository = new TaskRepository(dialogHistoryRepository.getConnection());
@@ -38,8 +38,14 @@ public class ChatServiceImpl implements ChatService {
         this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
+    public LlmServiceRegistry getLlmServiceRegistry() {
+        return llmServiceRegistry;
+    }
+
     @Override
     public LlmStructuredResponse processMessage(String userMessage) {
+        LlmService llmService = llmServiceRegistry.getCurrentService();
+        
         // Token usage tracker for all 3 requests
         TokenUsageTracker totalTokens = new TokenUsageTracker();
 
@@ -65,24 +71,23 @@ public class ChatServiceImpl implements ChatService {
 
         // === STAGE 1: Task Decision ===
         System.out.println("\n[Stage 1: Deciding task context...]");
-        TaskDecisionWithTokens taskDecisionResult = performTaskDecision(userMessage, ragContext);
+        TaskDecisionWithTokens taskDecisionResult = performTaskDecision(userMessage, ragContext, llmService);
         totalTokens.add(taskDecisionResult.tokens);
-        
+
         TaskDecisionResponse taskDecision = taskDecisionResult.response;
-        
+
         // Build or update task based on decision
         Task currentTask = buildCurrentTask(taskDecision);
-        
+
         // Print task decision result
         printTaskDecision(currentTask, taskDecision.isNewTask());
 
         // === STAGE 2: Get Answer with Task Context ===
         System.out.println("\n[Stage 2: Getting answer from LLM...]");
         String answerSystemPrompt = buildAnswerSystemPromptWithTask(currentTask, ragContext);
-        List<GigaChatApiService.ChatMessage> history = getHistoryForApi();
-        
-        GigaChatApiService.GigaChatResponse apiResponse =
-            gigaChatApiService.callChatApi(history, answerSystemPrompt);
+        List<LlmService.LlmMessage> history = getHistoryForApi();
+
+        LlmResponse apiResponse = llmService.callChatApi(history, answerSystemPrompt);
 
         // Track stage 2 tokens
         totalTokens.add(apiResponse.getPromptTokens(), apiResponse.getCompletionTokens(), apiResponse.getTotalTokens());
@@ -112,10 +117,11 @@ public class ChatServiceImpl implements ChatService {
         // === STAGE 3: Task Completion Status ===
         System.out.println("\n[Stage 3: Evaluating task completion...]");
         TaskCompletionWithTokens completionResult = performTaskCompletionEvaluation(
-            userMessage, 
-            apiResponse.getContent(), 
+            userMessage,
+            apiResponse.getContent(),
             currentTask,
-            ragContext
+            ragContext,
+            llmService
         );
         totalTokens.add(completionResult.tokens);
 
@@ -145,7 +151,7 @@ public class ChatServiceImpl implements ChatService {
         // Print total token usage summary after all stages
         printTokenSummary(totalTokens);
 
-        // Set total tokens in response (sum of all 3 requests)
+        // Set total token usage in response (sum of all 3 requests)
         LlmStructuredResponse.TokenUsage totalTokenUsage = new LlmStructuredResponse.TokenUsage();
         totalTokenUsage.setInput(totalTokens.input);
         totalTokenUsage.setOutput(totalTokens.output);
@@ -158,12 +164,12 @@ public class ChatServiceImpl implements ChatService {
     /**
      * Stage 1: Decide what the current task is and if requirements changed.
      */
-    private TaskDecisionWithTokens performTaskDecision(String userMessage, String ragContext) {
+    private TaskDecisionWithTokens performTaskDecision(String userMessage, String ragContext, LlmService llmService) {
         try {
             // Build context with previous task info
             StringBuilder contextBuilder = new StringBuilder();
             Task latestTask = taskRepository.findLatest();
-            
+
             if (latestTask != null) {
                 contextBuilder.append("\n\nPREVIOUS TASK:\n");
                 contextBuilder.append("ID: ").append(latestTask.getId()).append("\n");
@@ -184,18 +190,17 @@ public class ChatServiceImpl implements ChatService {
             }
 
             // Create message with user request
-            List<GigaChatApiService.ChatMessage> messages = new ArrayList<>();
-            messages.add(new GigaChatApiService.ChatMessage("user", userMessage));
+            List<LlmService.LlmMessage> messages = new ArrayList<>();
+            messages.add(new LlmService.LlmMessage("user", userMessage));
 
-            GigaChatApiService.GigaChatResponse response = 
-                gigaChatApiService.callTaskDecisionApi(
-                    ApiConstants.TASK_DECISION_SYSTEM_PROMPT + contextBuilder.toString(),
-                    messages
-                );
+            LlmResponse response = llmService.callTaskDecisionApi(
+                ApiConstants.TASK_DECISION_SYSTEM_PROMPT + contextBuilder.toString(),
+                messages
+            );
 
             TaskDecisionResponse decision = parseTaskDecisionResponse(response.getContent());
             TokenUsage tokens = new TokenUsage(response.getPromptTokens(), response.getCompletionTokens(), response.getTotalTokens());
-            
+
             return new TaskDecisionWithTokens(decision, tokens);
 
         } catch (Exception e) {
@@ -217,6 +222,13 @@ public class ChatServiceImpl implements ChatService {
      */
     private Task buildCurrentTask(TaskDecisionResponse decision) {
         Task task = new Task();
+
+        if (decision == null) {
+            task.setTitle("User request");
+            task.setRequirements(new ArrayList<>());
+            return task;
+        }
+
         task.setTitle(decision.getTaskTitle());
 
         if (decision.isNewTask()) {
@@ -224,18 +236,24 @@ public class ChatServiceImpl implements ChatService {
             task.setRequirements(decision.getRequirements() != null ? decision.getRequirements() : new ArrayList<>());
         } else {
             // Existing task - merge with previous task requirements
-            Task existingTask = taskRepository.findById(decision.getExistingTaskId());
-            if (existingTask != null) {
-                // Combine old requirements with new ones (avoid duplicates)
-                Set<String> allRequirements = new HashSet<>();
-                if (existingTask.getRequirements() != null) {
-                    allRequirements.addAll(existingTask.getRequirements());
+            Long existingId = decision.getExistingTaskId();
+            if (existingId != null) {
+                Task existingTask = taskRepository.findById(existingId);
+                if (existingTask != null) {
+                    // Combine old requirements with new ones (avoid duplicates)
+                    Set<String> allRequirements = new HashSet<>();
+                    if (existingTask.getRequirements() != null) {
+                        allRequirements.addAll(existingTask.getRequirements());
+                    }
+                    if (decision.getRequirements() != null) {
+                        allRequirements.addAll(decision.getRequirements());
+                    }
+                    task.setRequirements(new ArrayList<>(allRequirements));
+                } else {
+                    task.setRequirements(decision.getRequirements() != null ? decision.getRequirements() : new ArrayList<>());
                 }
-                if (decision.getRequirements() != null) {
-                    allRequirements.addAll(decision.getRequirements());
-                }
-                task.setRequirements(new ArrayList<>(allRequirements));
             } else {
+                // existingTaskId is null - treat as new task with given requirements
                 task.setRequirements(decision.getRequirements() != null ? decision.getRequirements() : new ArrayList<>());
             }
         }
@@ -279,7 +297,7 @@ public class ChatServiceImpl implements ChatService {
      * Stage 3: Evaluate task completion.
      */
     private TaskCompletionWithTokens performTaskCompletionEvaluation(
-            String userMessage, String assistantAnswer, Task currentTask, String ragContext) {
+            String userMessage, String assistantAnswer, Task currentTask, String ragContext, LlmService llmService) {
         try {
             // Build context for evaluation
             StringBuilder contextBuilder = new StringBuilder();
@@ -297,19 +315,18 @@ public class ChatServiceImpl implements ChatService {
             }
 
             // Create messages with user request and assistant answer
-            List<GigaChatApiService.ChatMessage> messages = new ArrayList<>();
-            messages.add(new GigaChatApiService.ChatMessage("user", userMessage));
-            messages.add(new GigaChatApiService.ChatMessage("assistant", assistantAnswer));
+            List<LlmService.LlmMessage> messages = new ArrayList<>();
+            messages.add(new LlmService.LlmMessage("user", userMessage));
+            messages.add(new LlmService.LlmMessage("assistant", assistantAnswer));
 
-            GigaChatApiService.GigaChatResponse response = 
-                gigaChatApiService.callTaskCompletionApi(
-                    ApiConstants.TASK_COMPLETION_SYSTEM_PROMPT + contextBuilder.toString(),
-                    messages
-                );
+            LlmResponse response = llmService.callTaskCompletionApi(
+                ApiConstants.TASK_COMPLETION_SYSTEM_PROMPT + contextBuilder.toString(),
+                messages
+            );
 
             TaskCompletionStatus status = parseTaskCompletionStatus(response.getContent());
             TokenUsage tokens = new TokenUsage(response.getPromptTokens(), response.getCompletionTokens(), response.getTotalTokens());
-            
+
             return new TaskCompletionWithTokens(status, tokens);
 
         } catch (Exception e) {
@@ -324,6 +341,7 @@ public class ChatServiceImpl implements ChatService {
     private TaskDecisionResponse parseTaskDecisionResponse(String content) {
         try {
             String jsonContent = extractJson(content);
+            jsonContent = cleanJson(jsonContent);
             return objectMapper.readValue(jsonContent, TaskDecisionResponse.class);
         } catch (Exception e) {
             logger.warn("Failed to parse task decision response: {}", e.getMessage());
@@ -334,6 +352,7 @@ public class ChatServiceImpl implements ChatService {
     private TaskCompletionStatus parseTaskCompletionStatus(String content) {
         try {
             String jsonContent = extractJson(content);
+            jsonContent = cleanJson(jsonContent);
             TaskCompletionStatus status = objectMapper.readValue(jsonContent, TaskCompletionStatus.class);
             // Validate that we got a proper status
             if (status.getReason() == null || status.getReason().isEmpty()) {
@@ -352,17 +371,17 @@ public class ChatServiceImpl implements ChatService {
      */
     private TaskCompletionStatus extractStatusFromText(String content) {
         TaskCompletionStatus status = new TaskCompletionStatus();
-        
+
         // Look for indicators of completion
         String lower = content.toLowerCase();
-        boolean isCompleted = lower.contains("completed") || 
-                              lower.contains("iscompleted") || 
+        boolean isCompleted = lower.contains("completed") ||
+                              lower.contains("iscompleted") ||
                               lower.contains("\"true\"") ||
                               (lower.contains("true") && !lower.contains("false"));
-        
+
         status.setCompleted(isCompleted);
         status.setReason(content.trim());
-        
+
         return status;
     }
 
@@ -385,12 +404,21 @@ public class ChatServiceImpl implements ChatService {
         return content;
     }
 
-    private List<GigaChatApiService.ChatMessage> getHistoryForApi() {
+    /**
+     * Clean common JSON issues from smaller LLMs: trailing commas before } or ].
+     */
+    private String cleanJson(String json) {
+        // Remove trailing commas before } or ]: ,} -> } and ,] -> ]
+        json = json.replaceAll(",\\s*([}\\]])", "$1");
+        return json;
+    }
+
+    private List<LlmService.LlmMessage> getHistoryForApi() {
         List<com.github.pvtitov.aichatlite.model.ChatMessage> history = dialogHistoryRepository.findAll();
-        List<GigaChatApiService.ChatMessage> apiMessages = new ArrayList<>();
+        List<LlmService.LlmMessage> apiMessages = new ArrayList<>();
 
         for (com.github.pvtitov.aichatlite.model.ChatMessage msg : history) {
-            apiMessages.add(new GigaChatApiService.ChatMessage(msg.getRole(), msg.getContent()));
+            apiMessages.add(new LlmService.LlmMessage(msg.getRole(), msg.getContent()));
         }
 
         return apiMessages;
@@ -425,18 +453,18 @@ public class ChatServiceImpl implements ChatService {
 
     private void printTokenSummary(TokenUsageTracker tracker) {
         System.out.println("\n========== Token Usage Summary ==========");
-        System.out.println("Stage 1 (Task Decision):  Input: " + tracker.stage1Input + 
-                          ", Output: " + tracker.stage1Output + 
+        System.out.println("Stage 1 (Task Decision):  Input: " + tracker.stage1Input +
+                          ", Output: " + tracker.stage1Output +
                           ", Total: " + tracker.stage1Total);
-        System.out.println("Stage 2 (Answer):         Input: " + tracker.stage2Input + 
-                          ", Output: " + tracker.stage2Output + 
+        System.out.println("Stage 2 (Answer):         Input: " + tracker.stage2Input +
+                          ", Output: " + tracker.stage2Output +
                           ", Total: " + tracker.stage2Total);
-        System.out.println("Stage 3 (Completion):     Input: " + tracker.stage3Input + 
-                          ", Output: " + tracker.stage3Output + 
+        System.out.println("Stage 3 (Completion):     Input: " + tracker.stage3Input +
+                          ", Output: " + tracker.stage3Output +
                           ", Total: " + tracker.stage3Total);
         System.out.println("-------------------------------------------------");
-        System.out.println("TOTAL:                    Input: " + tracker.input + 
-                          ", Output: " + tracker.output + 
+        System.out.println("TOTAL:                    Input: " + tracker.input +
+                          ", Output: " + tracker.output +
                           ", Total: " + tracker.total);
         System.out.println("============================================");
     }

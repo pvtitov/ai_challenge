@@ -13,6 +13,7 @@ public final class ApiConstants {
     
     public static final String OLLAMA_URL = "http://localhost:11434";
     public static final String OLLAMA_MODEL = "nomic-embed-text";
+    public static final String OLLAMA_DEFAULT_MODEL = "llama3.2:1b";
     
     public static final String EMBEDDING_DB_PATH = "embeddings.db";
     

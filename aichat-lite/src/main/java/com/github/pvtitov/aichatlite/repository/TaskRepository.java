@@ -41,6 +41,9 @@ public class TaskRepository {
     }
 
     public Task findById(Long id) {
+        if (id == null) {
+            return null;
+        }
         String sql = "SELECT * FROM tasks WHERE id = ?";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setLong(1, id);
