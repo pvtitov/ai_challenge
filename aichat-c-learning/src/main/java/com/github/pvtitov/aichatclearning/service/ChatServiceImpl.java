@@ -1,14 +1,14 @@
-package com.github.pvtitov.aichatlite.service;
+package com.github.pvtitov.aichatclearning.service;
 
-import com.github.pvtitov.aichatlite.constants.ApiConstants;
-import com.github.pvtitov.aichatlite.dto.EmbeddingSearchResult;
-import com.github.pvtitov.aichatlite.dto.LlmStructuredResponse;
-import com.github.pvtitov.aichatlite.dto.TaskCompletionStatus;
-import com.github.pvtitov.aichatlite.dto.TaskDecisionResponse;
-import com.github.pvtitov.aichatlite.model.ChatMessage;
-import com.github.pvtitov.aichatlite.model.Task;
-import com.github.pvtitov.aichatlite.repository.DialogHistoryRepository;
-import com.github.pvtitov.aichatlite.repository.TaskRepository;
+import com.github.pvtitov.aichatclearning.constants.ApiConstants;
+import com.github.pvtitov.aichatclearning.dto.EmbeddingSearchResult;
+import com.github.pvtitov.aichatclearning.dto.LlmStructuredResponse;
+import com.github.pvtitov.aichatclearning.dto.TaskCompletionStatus;
+import com.github.pvtitov.aichatclearning.dto.TaskDecisionResponse;
+import com.github.pvtitov.aichatclearning.model.ChatMessage;
+import com.github.pvtitov.aichatclearning.model.Task;
+import com.github.pvtitov.aichatclearning.repository.DialogHistoryRepository;
+import com.github.pvtitov.aichatclearning.repository.TaskRepository;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -50,8 +50,8 @@ public class ChatServiceImpl implements ChatService {
         TokenUsageTracker totalTokens = new TokenUsageTracker();
 
         // Save user message to history (will save assistant response later)
-        com.github.pvtitov.aichatlite.model.ChatMessage userMsg =
-            new com.github.pvtitov.aichatlite.model.ChatMessage("user", userMessage);
+        com.github.pvtitov.aichatclearning.model.ChatMessage userMsg =
+            new com.github.pvtitov.aichatclearning.model.ChatMessage("user", userMessage);
         dialogHistoryRepository.save(userMsg);
 
         // Search RAG for context
@@ -93,8 +93,8 @@ public class ChatServiceImpl implements ChatService {
         totalTokens.add(apiResponse.getPromptTokens(), apiResponse.getCompletionTokens(), apiResponse.getTotalTokens());
 
         // Save assistant response to history
-        com.github.pvtitov.aichatlite.model.ChatMessage assistantMsg =
-            new com.github.pvtitov.aichatlite.model.ChatMessage("assistant", apiResponse.getContent());
+        com.github.pvtitov.aichatclearning.model.ChatMessage assistantMsg =
+            new com.github.pvtitov.aichatclearning.model.ChatMessage("assistant", apiResponse.getContent());
         assistantMsg.setPromptTokens(apiResponse.getPromptTokens());
         assistantMsg.setCompletionTokens(apiResponse.getCompletionTokens());
         assistantMsg.setTotalTokens(apiResponse.getTotalTokens());
@@ -441,10 +441,10 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private List<LlmService.LlmMessage> getHistoryForApi() {
-        List<com.github.pvtitov.aichatlite.model.ChatMessage> history = dialogHistoryRepository.findAll();
+        List<com.github.pvtitov.aichatclearning.model.ChatMessage> history = dialogHistoryRepository.findAll();
         List<LlmService.LlmMessage> apiMessages = new ArrayList<>();
 
-        for (com.github.pvtitov.aichatlite.model.ChatMessage msg : history) {
+        for (com.github.pvtitov.aichatclearning.model.ChatMessage msg : history) {
             apiMessages.add(new LlmService.LlmMessage(msg.getRole(), msg.getContent()));
         }
 
