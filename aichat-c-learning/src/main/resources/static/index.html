@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Lite - Terminal</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1b26;
+            font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .terminal-window {
+            width: 100%;
+            max-width: 900px;
+            min-height: 600px;
+            background: #1e1e2e;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .terminal-header {
+            background: #313244;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px solid #45475a;
+        }
+
+        .terminal-button {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .btn-close { background: #f38ba8; }
+        .btn-minimize { background: #f9e2af; }
+        .btn-maximize { background: #a6e3a1; }
+
+        .terminal-title {
+            color: #cdd6f4;
+            font-size: 13px;
+            margin-left: 12px;
+            flex: 1;
+            text-align: center;
+        }
+
+        .terminal-body {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 16px;
+            background: #1e1e2e;
+            color: #cdd6f4;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        #output {
+            flex: 1;
+            overflow-y: auto;
+            padding-bottom: 10px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        #output::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #output::-webkit-scrollbar-track {
+            background: #1e1e2e;
+        }
+
+        #output::-webkit-scrollbar-thumb {
+            background: #45475a;
+            border-radius: 4px;
+        }
+
+        #output::-webkit-scrollbar-thumb:hover {
+            background: #585b70;
+        }
+
+        .input-line {
+            display: flex;
+            align-items: center;
+            margin-top: 8px;
+        }
+
+        .prompt {
+            color: #89b4fa;
+            margin-right: 8px;
+            white-space: nowrap;
+        }
+
+        #input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #cdd6f4;
+            font-family: inherit;
+            font-size: inherit;
+            outline: none;
+            caret-color: #cdd6f4;
+        }
+
+        .status-bar {
+            background: #313244;
+            padding: 6px 16px;
+            font-size: 12px;
+            color: #a6adc8;
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid #45475a;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+
+        .status-connected { background: #a6e3a1; }
+        .status-disconnected { background: #f38ba8; }
+        .status-connecting { background: #f9e2af; }
+
+        /* ANSI-like color classes for output */
+        .output-green { color: #a6e3a1; }
+        .output-red { color: #f38ba8; }
+        .output-yellow { color: #f9e2af; }
+        .output-blue { color: #89b4fa; }
+        .output-cyan { color: #94e2d5; }
+        .output-gray { color: #6c7086; }
+        .output-bold { font-weight: bold; }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 0;
+            }
+            .terminal-window {
+                min-height: 100vh;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="terminal-window">
+        <div class="terminal-header">
+            <div class="terminal-button btn-close"></div>
+            <div class="terminal-button btn-minimize"></div>
+            <div class="terminal-button btn-maximize"></div>
+            <div class="terminal-title">AI Chat Lite - Terminal</div>
+            <div style="width: 52px;"></div>
+        </div>
+        <div class="terminal-body">
+            <div id="output"></div>
+            <div class="input-line">
+                <span class="prompt">You:</span>
+                <input type="text" id="input" autofocus autocomplete="off" spellcheck="false">
+            </div>
+        </div>
+        <div class="status-bar">
+            <span id="status-text">
+                <span class="status-indicator status-connecting" id="status-dot"></span>
+                <span id="status-label">Connecting...</span>
+            </span>
+            <span id="server-info"></span>
+        </div>
+    </div>
+
+    <script>
+        const output = document.getElementById('output');
+        const input = document.getElementById('input');
+        const statusDot = document.getElementById('status-dot');
+        const statusLabel = document.getElementById('status-label');
+        const serverInfo = document.getElementById('server-info');
+
+        let ws = null;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 10;
+        let currentLine = '';
+        let commandHistory = [];
+        let historyIndex = -1;
+
+        function getWebSocketUrl() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.host;
+            return `${protocol}//${host}/ws`;
+        }
+
+        function connect() {
+            const url = getWebSocketUrl();
+            statusDot.className = 'status-indicator status-connecting';
+            statusLabel.textContent = 'Connecting...';
+
+            try {
+                ws = new WebSocket(url);
+
+                ws.onopen = function() {
+                    reconnectAttempts = 0;
+                    statusDot.className = 'status-indicator status-connected';
+                    statusLabel.textContent = 'Connected';
+                    serverInfo.textContent = new Date().toLocaleTimeString();
+                    appendToOutput('[Connected to AI Chat Lite]\n', 'output-green');
+                    input.focus();
+                };
+
+                ws.onmessage = function(event) {
+                    const data = event.data;
+
+                    // Check for prompt marker
+                    if (data === '\u0001PROMPT\u0001') {
+                        input.disabled = false;
+                        input.focus();
+                        return;
+                    }
+
+                    appendToOutput(data);
+                    scrollToBottom();
+                };
+
+                ws.onclose = function() {
+                    statusDot.className = 'status-indicator status-disconnected';
+                    statusLabel.textContent = 'Disconnected';
+                    input.disabled = true;
+                    appendToOutput('\n[Disconnected from server]\n', 'output-red');
+
+                    // Try to reconnect
+                    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        reconnectAttempts++;
+                        appendToOutput(`[Reconnecting in 2 seconds... (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})]\n`, 'output-yellow');
+                        setTimeout(connect, 2000);
+                    } else {
+                        appendToOutput('[Max reconnection attempts reached. Please refresh the page.]\n', 'output-red');
+                    }
+                };
+
+                ws.onerror = function(error) {
+                    statusDot.className = 'status-indicator status-disconnected';
+                    statusLabel.textContent = 'Error';
+                    console.error('WebSocket error:', error);
+                };
+            } catch (e) {
+                appendToOutput(`[Connection error: ${e.message}]\n`, 'output-red');
+                setTimeout(connect, 2000);
+            }
+        }
+
+        function appendToOutput(text, className) {
+            const span = document.createElement('span');
+            span.textContent = text;
+            if (className) {
+                span.className = className;
+            }
+            output.appendChild(span);
+        }
+
+        function scrollToBottom() {
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function sendInput() {
+            const value = input.value.trim();
+            if (!value || !ws || ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
+            // Add to command history
+            if (value) {
+                commandHistory.unshift(value);
+                if (commandHistory.length > 50) {
+                    commandHistory.pop();
+                }
+                historyIndex = -1;
+            }
+
+            input.value = '';
+            input.disabled = true;
+
+            // Send to server
+            ws.send(value);
+        }
+
+        // Event listeners
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendInput();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (commandHistory.length > 0 && historyIndex < commandHistory.length - 1) {
+                    historyIndex++;
+                    input.value = commandHistory[historyIndex];
+                }
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (historyIndex > 0) {
+                    historyIndex--;
+                    input.value = commandHistory[historyIndex];
+                } else {
+                    historyIndex = -1;
+                    input.value = '';
+                }
+            }
+        });
+
+        // Keep focus on input when clicking anywhere in terminal
+        document.querySelector('.terminal-body').addEventListener('click', function() {
+            if (!input.disabled) {
+                input.focus();
+            }
+        });
+
+        // Display server info
+        serverInfo.textContent = window.location.host;
+
+        // Initialize connection
+        connect();
+    </script>
+</body>
+</html>
