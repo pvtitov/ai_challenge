@@ -10,3 +10,4 @@ chat_history.json
 *.log
 *.json
 *.pdf
+private/
