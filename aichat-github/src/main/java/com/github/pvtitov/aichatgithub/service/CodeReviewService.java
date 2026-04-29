@@ -181,10 +181,31 @@ public class CodeReviewService {
             if (!commits.isEmpty() && !commits.get(0).get("message").startsWith("[GitHub MCP:")) {
                 Map<String, String> commit = commits.get(0);
                 data.append("LAST COMMIT:\n");
-                data.append("Hash: ").append(commit.get("hash")).append("\n");
-                data.append("Author: ").append(commit.get("author")).append("\n");
-                data.append("Date: ").append(commit.get("date")).append("\n");
-                data.append("Message: ").append(commit.get("message")).append("\n");
+                data.append("Hash: ").append(commit.getOrDefault("hash", "unknown")).append("\n");
+                data.append("Author: ").append(commit.getOrDefault("author", "unknown")).append("\n");
+                data.append("Date: ").append(commit.getOrDefault("date", "unknown")).append("\n");
+                data.append("Message: ").append(commit.getOrDefault("message", "no message")).append("\n");
+                
+                // Try to read the changed files if possible
+                String message = commit.getOrDefault("message", "");
+                if (message.contains("llm_cli") || message.contains("LLM") || message.contains("cli")) {
+                    String fileContent = gitHubMcpService.readFile("llm_cli.py", "main");
+                    if (!fileContent.startsWith("[GitHub MCP:")) {
+                        if (fileContent.length() > 3000) {
+                            fileContent = fileContent.substring(0, 3000) + "\n...[truncated]";
+                        }
+                        data.append("\nFILE: llm_cli.py\n\n").append(fileContent).append("\n\n");
+                    }
+                }
+                if (message.contains("test") || message.contains("Test")) {
+                    String fileContent = gitHubMcpService.readFile("test_llm_cli.py", "main");
+                    if (!fileContent.startsWith("[GitHub MCP:")) {
+                        if (fileContent.length() > 3000) {
+                            fileContent = fileContent.substring(0, 3000) + "\n...[truncated]";
+                        }
+                        data.append("\nFILE: test_llm_cli.py\n\n").append(fileContent).append("\n\n");
+                    }
+                }
             }
         }
 

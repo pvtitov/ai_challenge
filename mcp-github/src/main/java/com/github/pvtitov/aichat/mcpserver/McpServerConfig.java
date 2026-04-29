@@ -552,6 +552,89 @@ public class McpServerConfig {
             }
         }));
 
+        // Tool 12: list_commits
+        McpSchema.JsonSchema commitsSchema = new McpSchema.JsonSchema(
+                "object",
+                Map.of(
+                        "repo_path", Map.of("type", "string", "description", "Local path to the repository"),
+                        "max_count", Map.of("type", "string", "description", "Maximum number of commits to return (default: 10)")
+                ),
+                List.of("repo_path"),
+                null,
+                null,
+                null
+        );
+        McpSchema.Tool commitsTool = McpSchema.Tool.builder()
+                .name("list_commits")
+                .description("List recent commits in a repository. Useful for understanding the development history.")
+                .inputSchema(commitsSchema)
+                .build();
+        tools.add(new McpServerFeatures.SyncToolSpecification(commitsTool, (exchange, request) -> {
+            try {
+                String repoPath = (String) request.arguments().get("repo_path");
+                String maxCountStr = (String) request.arguments().get("max_count");
+                int maxCount = maxCountStr != null ? Integer.parseInt(maxCountStr) : 10;
+
+                if (repoPath == null || repoPath.trim().isEmpty()) {
+                    return new McpSchema.CallToolResult(
+                            List.of(new McpSchema.TextContent("Error: repo_path is required")),
+                            true, null, null
+                    );
+                }
+
+                String result = GitHubService.listCommits(repoPath.trim(), maxCount);
+                return new McpSchema.CallToolResult(
+                        List.of(new McpSchema.TextContent(result)),
+                        false, null, null
+                );
+            } catch (Exception e) {
+                return new McpSchema.CallToolResult(
+                        List.of(new McpSchema.TextContent("Error listing commits: " + e.getMessage())),
+                        true, null, null
+                );
+            }
+        }));
+
+        // Tool 13: list_branches
+        McpSchema.JsonSchema branchesSchema = new McpSchema.JsonSchema(
+                "object",
+                Map.of(
+                        "repo_path", Map.of("type", "string", "description", "Local path to the repository")
+                ),
+                List.of("repo_path"),
+                null,
+                null,
+                null
+        );
+        McpSchema.Tool branchesTool = McpSchema.Tool.builder()
+                .name("list_branches")
+                .description("List all branches in a repository. Useful for understanding the project structure.")
+                .inputSchema(branchesSchema)
+                .build();
+        tools.add(new McpServerFeatures.SyncToolSpecification(branchesTool, (exchange, request) -> {
+            try {
+                String repoPath = (String) request.arguments().get("repo_path");
+
+                if (repoPath == null || repoPath.trim().isEmpty()) {
+                    return new McpSchema.CallToolResult(
+                            List.of(new McpSchema.TextContent("Error: repo_path is required")),
+                            true, null, null
+                    );
+                }
+
+                String result = GitHubService.listBranches(repoPath.trim());
+                return new McpSchema.CallToolResult(
+                        List.of(new McpSchema.TextContent(result)),
+                        false, null, null
+                );
+            } catch (Exception e) {
+                return new McpSchema.CallToolResult(
+                        List.of(new McpSchema.TextContent("Error listing branches: " + e.getMessage())),
+                        true, null, null
+                );
+            }
+        }));
+
         return McpServer.sync(transportProvider)
                 .serverInfo("GitHub MCP Server", "1.0.0")
                 .instructions("This MCP server provides GitHub functionality for repository management and collaboration. Use clone_repository to get repos, get_repo_structure and read_file_contents to explore code, search_repositories to find projects, list_issues and list_pull_requests to track activity, create_pull_request to contribute, and commit_and_push to save changes.")

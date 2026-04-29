@@ -23,6 +23,7 @@ public class GitHubService {
 
     private static final String REPOS_BASE_DIR = "github-repos";
     private static GitHub github;
+    private static boolean githubInitialized = false;
 
     static {
         initializeGitHub();
@@ -31,18 +32,32 @@ public class GitHubService {
     private static void initializeGitHub() {
         String token = System.getenv("GITHUB_TOKEN");
         if (token == null || token.isEmpty()) {
-            throw new RuntimeException("GITHUB_TOKEN environment variable is not set");
-        }
-        try {
-            github = new GitHubBuilder().withOAuthToken(token).build();
-            // Ensure repos directory exists
-            File reposDir = new File(REPOS_BASE_DIR);
-            if (!reposDir.exists()) {
-                reposDir.mkdirs();
+            System.out.println("[MCP GitHub Server: WARNING] GITHUB_TOKEN not set - GitHub API features disabled");
+            System.out.println("[MCP GitHub Server: INFO] Local git operations (JGit) will still work");
+            githubInitialized = false;
+            // Don't throw - just mark as not initialized
+        } else {
+            try {
+                github = new GitHubBuilder().withOAuthToken(token).build();
+                githubInitialized = true;
+                System.out.println("[MCP GitHub Server: ✓] GitHub API initialized");
+                // Ensure repos directory exists
+                File reposDir = new File(REPOS_BASE_DIR);
+                if (!reposDir.exists()) {
+                    reposDir.mkdirs();
+                }
+            } catch (IOException e) {
+                System.out.println("[MCP GitHub Server: ✗] Failed to initialize GitHub: " + e.getMessage());
+                githubInitialized = false;
             }
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to initialize GitHub connection: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Check if GitHub API is available
+     */
+    private static boolean isGitHubAvailable() {
+        return githubInitialized && github != null;
     }
 
     /**
@@ -111,6 +126,9 @@ public class GitHubService {
      * List issues from a GitHub repository
      */
     public static String listIssues(String repoFullName, String state) {
+        if (!isGitHubAvailable()) {
+            return "GitHub API not available (GITHUB_TOKEN not set). Cannot list issues.";
+        }
         try {
             GHRepository repo = github.getRepository(repoFullName);
             GHIssueState issueState = state != null ? GHIssueState.valueOf(state.toUpperCase()) : GHIssueState.OPEN;
@@ -141,6 +159,9 @@ public class GitHubService {
      * List pull requests from a GitHub repository
      */
     public static String listPullRequests(String repoFullName, String state) {
+        if (!isGitHubAvailable()) {
+            return "GitHub API not available (GITHUB_TOKEN not set). Cannot list pull requests.";
+        }
         try {
             GHRepository repo = github.getRepository(repoFullName);
             GHIssueState prState = state != null ? GHIssueState.valueOf(state.toUpperCase()) : GHIssueState.OPEN;
@@ -171,6 +192,9 @@ public class GitHubService {
      * Get pull request details
      */
     public static String getPullRequestDetails(String repoFullName, String prNumber) {
+        if (!isGitHubAvailable()) {
+            return "GitHub API not available (GITHUB_TOKEN not set). Cannot get PR details.";
+        }
         try {
             GHRepository repo = github.getRepository(repoFullName);
             GHPullRequest pr = repo.getPullRequest(Integer.parseInt(prNumber));
@@ -194,6 +218,9 @@ public class GitHubService {
      * Create a pull request
      */
     public static String createPullRequest(String repoFullName, String title, String body, String head, String base) {
+        if (!isGitHubAvailable()) {
+            return "GitHub API not available (GITHUB_TOKEN not set). Cannot create pull requests.";
+        }
         try {
             GHRepository repo = github.getRepository(repoFullName);
             GHPullRequest pr = repo.createPullRequest(title, head, base, body);
@@ -210,6 +237,9 @@ public class GitHubService {
      * Search repositories
      */
     public static String searchRepositories(String query, String language, String sort) {
+        if (!isGitHubAvailable()) {
+            return "GitHub API not available (GITHUB_TOKEN not set). Cannot search repositories.";
+        }
         try {
             StringBuilder searchQuery = new StringBuilder(query);
             if (language != null && !language.isEmpty()) {
@@ -255,6 +285,9 @@ public class GitHubService {
      * Get README content from a repository
      */
     public static String getReadme(String repoFullName) {
+        if (!isGitHubAvailable()) {
+            return "GitHub API not available (GITHUB_TOKEN not set). Cannot get README.";
+        }
         try {
             GHRepository repo = github.getRepository(repoFullName);
             java.io.InputStream is = repo.getReadme().read();
@@ -313,6 +346,73 @@ public class GitHubService {
             return "Branch created successfully: " + branchName;
         } catch (GitAPIException | IOException e) {
             return "Error creating branch: " + e.getMessage();
+        }
+    }
+
+    /**
+     * List commits for a repository
+     */
+    public static String listCommits(String repoPath, int maxCount) {
+        try {
+            File gitDir = Paths.get(repoPath, ".git").toFile();
+            if (!gitDir.exists()) {
+                return "Not a git repository: " + repoPath;
+            }
+
+            FileRepositoryBuilder builder = new FileRepositoryBuilder();
+            Repository repository = builder.setGitDir(gitDir).build();
+            Git git = new Git(repository);
+
+            Iterable<org.eclipse.jgit.revwalk.RevCommit> commits = git.log().setMaxCount(maxCount).call();
+            StringBuilder sb = new StringBuilder();
+            sb.append("Recent commits in: ").append(repoPath).append("\n\n");
+            
+            int count = 0;
+            for (org.eclipse.jgit.revwalk.RevCommit commit : commits) {
+                if (count >= maxCount) break;
+                sb.append("Hash: ").append(commit.getName().substring(0, 7)).append("\n");
+                sb.append("Author: ").append(commit.getAuthorIdent().getName()).append("\n");
+                sb.append("Date: ").append(commit.getCommitterIdent().getWhen()).append("\n");
+                sb.append("Message: ").append(commit.getShortMessage()).append("\n");
+                sb.append("\n");
+                count++;
+            }
+            
+            return sb.toString();
+        } catch (GitAPIException | IOException e) {
+            return "Error listing commits: " + e.getMessage();
+        }
+    }
+
+    /**
+     * List branches for a repository
+     */
+    public static String listBranches(String repoPath) {
+        try {
+            File gitDir = Paths.get(repoPath, ".git").toFile();
+            if (!gitDir.exists()) {
+                return "Not a git repository: " + repoPath;
+            }
+
+            FileRepositoryBuilder builder = new FileRepositoryBuilder();
+            Repository repository = builder.setGitDir(gitDir).build();
+            Git git = new Git(repository);
+
+            List<org.eclipse.jgit.lib.Ref> branches = git.branchList().call();
+            StringBuilder sb = new StringBuilder();
+            sb.append("Branches in: ").append(repoPath).append("\n\n");
+            
+            for (org.eclipse.jgit.lib.Ref branch : branches) {
+                String name = branch.getName();
+                if (name.startsWith("refs/heads/")) {
+                    name = name.substring("refs/heads/".length());
+                }
+                sb.append("- ").append(name).append("\n");
+            }
+            
+            return sb.toString();
+        } catch (GitAPIException | IOException e) {
+            return "Error listing branches: " + e.getMessage();
         }
     }
 

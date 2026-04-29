@@ -81,6 +81,10 @@ public class GitHubMcpService {
         }
 
         try {
+            System.out.println("[GitHub MCP: Calling list_commits tool]");
+            System.out.println("[GitHub MCP: Repository: " + repoPath + "]");
+            System.out.println("[GitHub MCP: Max commits: " + limit + "]");
+            
             // Call the list_commits tool
             Map<String, Object> arguments = new HashMap<>();
             arguments.put("repo_path", repoPath);
@@ -92,6 +96,7 @@ public class GitHubMcpService {
 
             if (result.isError()) {
                 String errorText = extractTextContent(result);
+                System.out.println("[GitHub MCP: ✗ Error from list_commits: " + errorText + "]");
                 logger.error("Error calling list_commits: {}", errorText);
                 Map<String, String> errorMap = new HashMap<>();
                 errorMap.put("message", "[GitHub MCP: Error - " + errorText + "]");
@@ -100,9 +105,16 @@ public class GitHubMcpService {
 
             // Parse the result text into commit entries
             String textContent = extractTextContent(result);
-            logger.info("Successfully retrieved commits: {}", textContent.substring(0, Math.min(100, textContent.length())));
-            return parseCommitsText(textContent);
+            List<Map<String, String>> commits = parseCommitsText(textContent);
+            
+            System.out.println("[GitHub MCP: ✓ Successfully parsed " + commits.size() + " commits]");
+            if (!commits.isEmpty()) {
+                System.out.println("[GitHub MCP: Latest commit: " + commits.get(0).getOrDefault("message", "unknown") + "]");
+            }
+            
+            return commits;
         } catch (Exception e) {
+            System.out.println("[GitHub MCP: ✗ Exception in list_commits: " + e.getMessage() + "]");
             logger.error("Failed to get commit history: {}", e.getMessage());
             Map<String, String> errorMap = new HashMap<>();
             errorMap.put("message", "[GitHub MCP: Error - " + e.getMessage() + "]");
@@ -119,6 +131,9 @@ public class GitHubMcpService {
         }
 
         try {
+            System.out.println("[GitHub MCP: Calling list_branches tool]");
+            System.out.println("[GitHub MCP: Repository: " + repoPath + "]");
+            
             // Call the list_branches tool
             Map<String, Object> arguments = new HashMap<>();
             arguments.put("repo_path", repoPath);
@@ -126,16 +141,26 @@ public class GitHubMcpService {
             McpSchema.CallToolResult result = mcpClient.callTool(
                 new McpSchema.CallToolRequest("list_branches", arguments)
             );
-            
+
             if (result.isError()) {
-                logger.error("Error calling list_branches: {}", result.content());
-                return List.of("[GitHub MCP: Error - " + extractTextContent(result) + "]");
+                String errorText = extractTextContent(result);
+                System.out.println("[GitHub MCP: ✗ Error from list_branches: " + errorText + "]");
+                logger.error("Error calling list_branches: {}", errorText);
+                return List.of("[GitHub MCP: Error - " + errorText + "]");
             }
 
             // Parse the result text into branch names
             String textContent = extractTextContent(result);
-            return parseBranchesText(textContent);
+            List<String> branches = parseBranchesText(textContent);
+            
+            System.out.println("[GitHub MCP: ✓ Found " + branches.size() + " branches]");
+            if (!branches.isEmpty()) {
+                System.out.println("[GitHub MCP: Branches: " + String.join(", ", branches) + "]");
+            }
+            
+            return branches;
         } catch (Exception e) {
+            System.out.println("[GitHub MCP: ✗ Exception in list_branches: " + e.getMessage() + "]");
             logger.error("Failed to list branches: {}", e.getMessage());
             return List.of("[GitHub MCP: Error - " + e.getMessage() + "]");
         }
@@ -150,6 +175,9 @@ public class GitHubMcpService {
         }
 
         try {
+            System.out.println("[GitHub MCP: Calling read_file_contents tool]");
+            System.out.println("[GitHub MCP: File: " + path + "]");
+            
             // Call the read_file_contents tool
             Map<String, Object> arguments = new HashMap<>();
             arguments.put("repo_path", repoPath);
@@ -158,14 +186,19 @@ public class GitHubMcpService {
             McpSchema.CallToolResult result = mcpClient.callTool(
                 new McpSchema.CallToolRequest("read_file_contents", arguments)
             );
-            
+
             if (result.isError()) {
-                logger.error("Error calling read_file_contents: {}", result.content());
-                return "[GitHub MCP: Error - " + extractTextContent(result) + "]";
+                String errorText = extractTextContent(result);
+                System.out.println("[GitHub MCP: ✗ Error reading " + path + ": " + errorText + "]");
+                logger.error("Error calling read_file_contents: {}", errorText);
+                return "[GitHub MCP: Error - " + errorText + "]";
             }
 
-            return extractTextContent(result);
+            String content = extractTextContent(result);
+            System.out.println("[GitHub MCP: ✓ Read " + path + " (" + content.length() + " bytes)]");
+            return content;
         } catch (Exception e) {
+            System.out.println("[GitHub MCP: ✗ Exception reading " + path + ": " + e.getMessage() + "]");
             logger.error("Failed to read file: {}", e.getMessage());
             return "[GitHub MCP: Error - " + e.getMessage() + "]";
         }
@@ -180,6 +213,10 @@ public class GitHubMcpService {
         }
 
         try {
+            System.out.println("[GitHub MCP: Calling get_repo_structure tool]");
+            System.out.println("[GitHub MCP: Repository: " + repoPath + "]");
+            System.out.println("[GitHub MCP: Max depth: " + maxDepth + "]");
+            
             // Call the get_repo_structure tool
             Map<String, Object> arguments = new HashMap<>();
             arguments.put("repo_path", repoPath);
@@ -188,14 +225,19 @@ public class GitHubMcpService {
             McpSchema.CallToolResult result = mcpClient.callTool(
                 new McpSchema.CallToolRequest("get_repo_structure", arguments)
             );
-            
+
             if (result.isError()) {
-                logger.error("Error calling get_repo_structure: {}", result.content());
-                return "[GitHub MCP: Error - " + extractTextContent(result) + "]";
+                String errorText = extractTextContent(result);
+                System.out.println("[GitHub MCP: ✗ Error getting structure: " + errorText + "]");
+                logger.error("Error calling get_repo_structure: {}", errorText);
+                return "[GitHub MCP: Error - " + errorText + "]";
             }
 
-            return extractTextContent(result);
+            String structure = extractTextContent(result);
+            System.out.println("[GitHub MCP: ✓ Got repository structure (" + structure.length() + " bytes)]");
+            return structure;
         } catch (Exception e) {
+            System.out.println("[GitHub MCP: ✗ Exception getting structure: " + e.getMessage() + "]");
             logger.error("Failed to get repo structure: {}", e.getMessage());
             return "[GitHub MCP: Error - " + e.getMessage() + "]";
         }
