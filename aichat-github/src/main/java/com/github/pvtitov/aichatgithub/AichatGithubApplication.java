@@ -3,6 +3,7 @@ package com.github.pvtitov.aichatgithub;
 import com.github.pvtitov.aichatgithub.dto.LlmStructuredResponse;
 import com.github.pvtitov.aichatgithub.service.ChatService;
 import com.github.pvtitov.aichatgithub.service.ChatServiceImpl;
+import com.github.pvtitov.aichatgithub.service.CodeReviewService;
 import com.github.pvtitov.aichatgithub.service.LlmModel;
 
 import java.util.List;
@@ -14,6 +15,7 @@ public class AichatGithubApplication {
     private static final String COMMAND_CLEAN = "/clean";
     private static final String COMMAND_MODEL = "/model";
     private static final String COMMAND_HELP = "/help";
+    private static final String COMMAND_REVIEW = "/review";
 
     public static void main(String[] args) {
         System.out.println("========================================");
@@ -24,7 +26,13 @@ public class AichatGithubApplication {
         System.out.println("  " + COMMAND_CLEAN + " - Clear dialog history");
         System.out.println("  " + COMMAND_MODEL + " - List available models");
         System.out.println("  " + COMMAND_MODEL + " <model> - Switch to a model");
+        System.out.println("  " + COMMAND_REVIEW + " <target> - Review code (commit, PR, branch, project)");
         System.out.println("  " + COMMAND_HELP + " - Show project structure or ask about tinyAI");
+        System.out.println("\nExamples:");
+        System.out.println("  " + COMMAND_REVIEW + " last commit");
+        System.out.println("  " + COMMAND_REVIEW + " PR #123");
+        System.out.println("  " + COMMAND_REVIEW + " main branch");
+        System.out.println("  " + COMMAND_REVIEW + " entire project");
         System.out.println("========================================\n");
 
         ChatService chatService = new ChatServiceImpl();
@@ -62,10 +70,22 @@ public class AichatGithubApplication {
                 }
 
                 if (userInput.toLowerCase().startsWith(COMMAND_HELP)) {
-                    String helpQuery = userInput.length() > COMMAND_HELP.length() 
-                        ? userInput.substring(COMMAND_HELP.length()).trim() 
+                    String helpQuery = userInput.length() > COMMAND_HELP.length()
+                        ? userInput.substring(COMMAND_HELP.length()).trim()
                         : "";
                     handleHelp(chatService, helpQuery);
+                    continue;
+                }
+
+                if (userInput.toLowerCase().equals(COMMAND_REVIEW)) {
+                    // /review without arguments - default to reviewing the entire project
+                    handleReview(chatService, "entire project");
+                    continue;
+                }
+
+                if (userInput.toLowerCase().startsWith(COMMAND_REVIEW + " ")) {
+                    String reviewTarget = userInput.substring(COMMAND_REVIEW.length()).trim();
+                    handleReview(chatService, reviewTarget);
                     continue;
                 }
 
@@ -157,6 +177,42 @@ public class AichatGithubApplication {
                 e.printStackTrace();
                 System.out.println();
             }
+        }
+    }
+
+    private static void handleReview(ChatService chatService, String reviewTarget) {
+        System.out.println("\n=== Code Review Mode ===");
+        System.out.println("Target: " + reviewTarget);
+        System.out.println();
+
+        try {
+            // Create review service using same dependencies as chat service
+            CodeReviewService reviewService = new CodeReviewService(
+                chatService.getLlmServiceRegistry(),
+                ((ChatServiceImpl) chatService).getEmbeddingSearchService(),
+                ((ChatServiceImpl) chatService).getGitHubMcpService(),
+                ((ChatServiceImpl) chatService).getDialogHistoryRepository()
+            );
+
+            LlmStructuredResponse review = reviewService.performReview(reviewTarget);
+
+            System.out.println("\n" + review.getResponse());
+
+            // Print token usage
+            if (review.getTokens() != null) {
+                System.out.println("\n━━━ Token Usage ━━━");
+                System.out.println("Input:  " + review.getTokens().getInput());
+                System.out.println("Output: " + review.getTokens().getOutput());
+                System.out.println("Total:  " + review.getTokens().getTotal());
+                System.out.println("━━━━━━━━━━━━━━━━━━━━━━");
+            }
+
+            System.out.println("\n=== Review Complete ===\n");
+
+        } catch (Exception e) {
+            System.err.println("Error during review: " + e.getMessage());
+            e.printStackTrace();
+            System.out.println();
         }
     }
 }

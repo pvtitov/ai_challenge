@@ -89,16 +89,18 @@ public class GitHubMcpService {
             McpSchema.CallToolResult result = mcpClient.callTool(
                 new McpSchema.CallToolRequest("list_commits", arguments)
             );
-            
+
             if (result.isError()) {
-                logger.error("Error calling list_commits: {}", result.content());
+                String errorText = extractTextContent(result);
+                logger.error("Error calling list_commits: {}", errorText);
                 Map<String, String> errorMap = new HashMap<>();
-                errorMap.put("message", "[GitHub MCP: Error - " + extractTextContent(result) + "]");
+                errorMap.put("message", "[GitHub MCP: Error - " + errorText + "]");
                 return List.of(errorMap);
             }
 
             // Parse the result text into commit entries
             String textContent = extractTextContent(result);
+            logger.info("Successfully retrieved commits: {}", textContent.substring(0, Math.min(100, textContent.length())));
             return parseCommitsText(textContent);
         } catch (Exception e) {
             logger.error("Failed to get commit history: {}", e.getMessage());

@@ -79,6 +79,31 @@ fi
 
 cd "$AICHAT_GITHUB_DIR"
 
+# Step 2.5: Ensure tinyAI repo is accessible
+if [ ! -d "private/tinyAI/.git" ]; then
+    echo -e "\n${YELLOW}Step 2.5: Setting up tinyAI repository...${NC}"
+    mkdir -p private
+    
+    # Check if repo exists in parent directory's private folder
+    if [ -d "../private/tinyAI/.git" ]; then
+        echo -e "${YELLOW}Linking to existing repository...${NC}"
+        ln -sf "$(pwd)/../private/tinyAI" private/tinyAI
+        echo -e "${GREEN}✓ tinyAI repository linked${NC}"
+    elif [ -d "private/tinyAI" ]; then
+        echo -e "${GREEN}✓ tinyAI directory exists (may not be a git repo)${NC}"
+    else
+        echo -e "${YELLOW}tinyAI repository not found. You may need to clone it:${NC}"
+        echo -e "  git clone https://github.com/Headmast/tinyAI.git private/tinyAI"
+    fi
+    
+    # Ensure embeddings.db is accessible
+    if [ ! -f "private/tinyAI/embeddings.db" ] && [ -f "../private/tinyAI/embeddings.db" ]; then
+        mkdir -p private/tinyAI
+        cp ../private/tinyAI/embeddings.db private/tinyAI/embeddings.db
+        echo -e "${GREEN}✓ Embeddings database copied${NC}"
+    fi
+fi
+
 # Step 3: Build aichat-github
 echo -e "\n${YELLOW}Step 3: Building aichat-github...${NC}"
 mvn clean package -DskipTests -q

@@ -1,6 +1,7 @@
 package com.github.pvtitov.aichatgithub.service;
 
 import com.github.pvtitov.aichatgithub.dto.LlmStructuredResponse;
+import com.github.pvtitov.aichatgithub.repository.DialogHistoryRepository;
 
 public interface ChatService {
 
@@ -25,4 +26,19 @@ public interface ChatService {
      * Get the LLM service registry for model management
      */
     LlmServiceRegistry getLlmServiceRegistry();
+
+    /**
+     * Get the embedding search service
+     */
+    EmbeddingSearchService getEmbeddingSearchService();
+
+    /**
+     * Get the GitHub MCP service
+     */
+    GitHubMcpService getGitHubMcpService();
+
+    /**
+     * Get the dialog history repository
+     */
+    DialogHistoryRepository getDialogHistoryRepository();
 }

@@ -28,7 +28,7 @@ public class EmbeddingSearchService {
     private final double similarityThreshold;
     
     public EmbeddingSearchService() {
-        this(ApiConstants.OLLAMA_URL, ApiConstants.OLLAMA_MODEL, 5, 0.7);
+        this(ApiConstants.OLLAMA_URL, ApiConstants.OLLAMA_MODEL, 5, 0.5);
     }
     
     public EmbeddingSearchService(String ollamaUrl, String ollamaModel, int topK, double similarityThreshold) {
@@ -60,7 +60,9 @@ public class EmbeddingSearchService {
             // Load all embeddings and compute cosine similarity
             List<EmbeddingEntry> allEntries = embeddingRepository.findAllWithEmbeddings();
             System.out.println("[Searching through " + allEntries.size() + " indexed chunks]");
-            List<EmbeddingSearchResult> results = allEntries.stream()
+            
+            // Debug: Show top similarity scores
+            List<EmbeddingSearchResult> allResults = allEntries.stream()
                 .map(entry -> {
                     double similarity = cosineSimilarity(queryEmbedding, entry.getEmbedding());
                     return new EmbeddingSearchResult(
@@ -73,6 +75,18 @@ public class EmbeddingSearchService {
                     );
                 })
                 .sorted(Comparator.comparingDouble(EmbeddingSearchResult::getSimilarityScore).reversed())
+                .collect(Collectors.toList());
+            
+            // Show top 3 scores for debugging
+            if (!allResults.isEmpty()) {
+                System.out.println("[RAG Debug: Top 3 similarity scores]");
+                for (int i = 0; i < Math.min(3, allResults.size()); i++) {
+                    System.out.println("  " + (i+1) + ". " + allResults.get(i).getTitle() + 
+                        " - Score: " + String.format("%.3f", allResults.get(i).getSimilarityScore()));
+                }
+            }
+            
+            List<EmbeddingSearchResult> results = allResults.stream()
                 .filter(result -> result.getSimilarityScore() >= similarityThreshold)
                 .limit(topK)
                 .collect(Collectors.toList());
